@@ -1,0 +1,19 @@
+<Project>
+  <PropertyGroup>
+    <Version>1.0.0</Version>
+
+    <Authors>Swiftly Tracker</Authors>
+    <Company>Swiftly Tracker</Company>
+    <Product>SteamDepotDownload</Product>
+    <Copyright>Copyright (c) Swiftly Tracker</Copyright>
+
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/Swiftly-Tracker/SteamDepotDownload</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/Swiftly-Tracker/SteamDepotDownload</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+</Project>

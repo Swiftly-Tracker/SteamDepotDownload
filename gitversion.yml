@@ -1,0 +1,30 @@
+mode: Mainline
+next-version: 1.0.0
+branches:
+  main:
+    regex: ^main$
+    increment: Patch
+    is-mainline: true
+    is-release-branch: true
+  beta:
+    regex: ^beta$
+    increment: Inherit
+    tag: beta
+    is-release-branch: false
+    is-mainline: false
+    source-branches: [ main ]
+  other:
+    regex: ^(?!main|beta$).*$
+    increment: Inherit
+    is-release-branch: false
+    is-mainline: false
+    source-branches: [ main ]
+ignore:
+  sha: []
+merge-message-formats: {}
+commit-message-incrementing: Enabled
+major-version-bump-message: '\+semver:\s?(breaking|major)'
+minor-version-bump-message: '\+semver:\s?(feature|minor)'
+patch-version-bump-message: '\+semver:\s?(fix|patch)'
+tag-prefix: ''
+commit-date-format: yyyy-MM-dd

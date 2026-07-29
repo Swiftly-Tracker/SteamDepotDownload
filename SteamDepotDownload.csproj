@@ -1,12 +1,12 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <PackageId>SteamDepotDownload</PackageId>
-    <Authors>Swiftly Solution</Authors>
     <RootNamespace>SteamDepotDownload</RootNamespace>
-    <PackageProjectUrl>https://github.com/Swiftly-Tracker/SteamDepotDownload</PackageProjectUrl>
-    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
-    
+    <Description>Download Steam game content without the Steam client. Pulls apps, depots and pinned manifests straight from Steam's CDN, with chunk-level incremental updates and per-depot file filtering.</Description>
+    <PackageTags>steam;depot;manifest;cdn;steamkit;downloader</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -17,7 +17,6 @@
     <BaseOutputPath>build\</BaseOutputPath>
     <OutputPath>$(BaseOutputPath)Release\SteamDepotDownload</OutputPath>
     <AssemblyName>SteamDepotDownload</AssemblyName>
-    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
     <PlatformTarget>x64</PlatformTarget>
 
     <DebugType>portable</DebugType>
@@ -26,12 +25,39 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="SteamDepotDownload.Steam\SteamDepotDownload.Steam.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <None Include="README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="SteamDepotDownload.Steam\SteamDepotDownload.Steam.csproj" PrivateAssets="all" />
     <ProjectReference Include="SteamDepotDownload.App\SteamDepotDownload.App.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="QRCoder" Version="1.8.0" />
+    <PackageReference Include="Spectre.Console" Version="0.57.2" />
+    <PackageReference Include="SteamKit2" Version="3.4.0" />
   </ItemGroup>
 
   <ItemGroup>
     <Compile Remove="**\*.cs" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <TargetsForTfmSpecificBuildOutput>$(TargetsForTfmSpecificBuildOutput);AddProjectDllsToPackage</TargetsForTfmSpecificBuildOutput>
+  </PropertyGroup>
+
+  <Target Name="AddProjectDllsToPackage" DependsOnTargets="ResolveReferences">
+    <ItemGroup>
+      <_SddPackagedAssembly Include="@(ReferenceCopyLocalPaths)"
+        Condition="'%(ReferenceCopyLocalPaths.Extension)' == '.dll' Or '%(ReferenceCopyLocalPaths.Extension)' == '.xml'" />
+      <_SddPackagedAssembly Remove="@(_SddPackagedAssembly)"
+        Condition="!$([System.String]::Copy('%(Filename)').StartsWith('SteamDepotDownload.'))" />
+      <_SddPackagedAssembly Include="@(_SddPackagedAssembly->'%(RootDir)%(Directory)%(Filename).xml')"
+        Condition="Exists('%(RootDir)%(Directory)%(Filename).xml')" />
+      <BuildOutputInPackage Include="@(_SddPackagedAssembly)" />
+    </ItemGroup>
+    <Message Importance="high" Text="Packaging: @(_SddPackagedAssembly->'%(Filename)%(Extension)', ', ')" />
+  </Target>
 
 </Project>

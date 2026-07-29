@@ -1,8 +1,32 @@
 # SteamDepotDownload
 
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/Swiftly-Tracker/SteamDepotDownload/build.yml?branch=main)](https://github.com/Swiftly-Tracker/SteamDepotDownload/actions)
+[![Release](https://img.shields.io/github/v/release/Swiftly-Tracker/SteamDepotDownload?include_prereleases)](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases)
+[![NuGet](https://img.shields.io/nuget/v/SteamDepotDownload.svg)](https://www.nuget.org/packages/SteamDepotDownload/)
+
 Download Steam game content without needing the Steam client. Works as both a CLI tool and a .NET library.
 
 Uses [SteamKit2](https://github.com/SteamRE/SteamKit) to pull directly from Steam's CDN. Download whole apps, specific depots, pinned manifests, or alternate branches.
+
+## Install
+
+Grab an archive from the [latest release](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest):
+
+| Archive | Needs .NET installed? | Use when |
+| --- | --- | --- |
+| [`SteamDepotDownload-win-x64.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-win-x64.zip) | No | Windows, just run it |
+| [`SteamDepotDownload-linux-x64.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-linux-x64.zip) | No | Linux, just run it |
+| [`SteamDepotDownload-win-x64-portable.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-win-x64-portable.zip) | .NET 10 runtime | Windows, smaller download |
+| [`SteamDepotDownload-linux-x64-portable.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-linux-x64-portable.zip) | .NET 10 runtime | Linux, smaller download |
+
+Those links always resolve to the newest stable release. On Linux, `chmod +x SteamDepotDownload.App` after unzipping.
+
+As a library:
+
+```bash
+dotnet add package SteamDepotDownload
+```
 
 ## Layout
 
@@ -106,7 +130,7 @@ Every CLI flag has a matching `depot_*` ConVar (run `convars` to list). So you c
 
 ## Use as a library
 
-The `SteamDepotDownload.Steam` NuGet package has no terminal or CLI dependencies. Use it headless in your own app.
+The `SteamDepotDownload` NuGet package has no terminal or CLI dependencies. Use it headless in your own app.
 
 ```csharp
 using SteamDepotDownload.Steam.Shared.Depot;
@@ -131,6 +155,82 @@ No console output unless you wire up an `ISteamAuthenticator` (for logins). Mult
 
 On shared machines, use `steam_logout` instead. To use a different path, pass `AccountSettingsStore.CreateAt(path)` when building the library session.
 
+## Building from source
+
+Requires the **.NET 10 SDK**.
+
+```bash
+git clone https://github.com/Swiftly-Tracker/SteamDepotDownload.git
+cd SteamDepotDownload
+dotnet build SteamDepotDownload.slnx -c Release
+```
+
+Output lands in `build/Release/<project>/`; the CLI is `build/Release/SteamDepotDownload.App/SteamDepotDownload.App`.
+
+To produce a standalone binary like the release archives:
+
+```bash
+dotnet publish SteamDepotDownload.App/SteamDepotDownload.App.csproj -c Release \
+  -r linux-x64 --self-contained true \
+  -p:PublishSingleFile=true -p:PublishReadyToRun=true -p:PublishTrimmed=false \
+  -o out/linux-x64
+```
+
+> `PublishTrimmed` must stay `false`. The app resolves its modules by name through `Assembly.Load`, which the trimmer cannot see.
+
+## Releases & branches
+
+| Branch | Publishes | Tag |
+| --- | --- | --- |
+| `main` | Stable release | `vX.Y.Z` |
+| `beta` | Prerelease | `vX.Y.Z-beta.N` |
+
+The flow:
+
+1. Features and fixes land on **`beta`**. Every push builds and publishes a prerelease with all four archives attached.
+2. When a batch is ready, open a PR from **`beta` → `main`**. Merging it publishes the stable release and pushes the NuGet package.
+3. `beta` is then automatically force-reset onto `main`, so the next cycle starts clean. If you keep a local `beta`, run `git fetch && git reset --hard origin/beta` after each stable release.
+
+Versions come from [GitVersion](https://gitversion.net/) (`gitversion.yml`) — **never edit a version number by hand.** Control the bump from your commit message:
+
+```
++semver: major     (or: breaking)
++semver: minor     (or: feature)
++semver: patch     (or: fix)
+```
+
+Without a trailer, `main` increments the patch version and `beta` increments its prerelease counter.
+
+## Architecture
+
+```
+SteamDepotDownload/
+├── SteamDepotDownload.Tier0/        # Framework layer
+│   └── src/
+│       ├── Core/                    # ConVar system, logging, terminal, serialization
+│       └── Shared/                  # Public interfaces (IInterfaceSystem, IConVar, ITerminal, ...)
+├── SteamDepotDownload.Steam/        # Downloader
+│   └── src/
+│       ├── Core/                    # Session, CDN pool, chunk pump, manifest cache, state store
+│       └── Shared/                  # Public API (ISteamSession, IDepotFetcher, DownloadConfig, ...)
+├── SteamDepotDownload.App/          # CLI entry point
+│   └── src/Application.cs
+├── SteamDepotDownload.csproj        # NuGet packaging front
+├── Directory.Build.props            # Shared metadata + version
+└── gitversion.yml                   # Versioning rules
+```
+
+## Community
+
+- **Issues**: [Report bugs and request features](https://github.com/Swiftly-Tracker/SteamDepotDownload/issues)
+- **Security**: [Report privately](https://github.com/Swiftly-Tracker/SteamDepotDownload/security/advisories/new) — never in a public issue
+
 ## License
 
-GPL-3.0. See [LICENSE](LICENSE).
+GPL-3.0. See [LICENSE](LICENSE). Third-party attributions in [THIRDPARTY.md](THIRDPARTY.md).
+
+---
+
+<div align="center">
+  <strong>Made with ❤️ by the Swiftly Development team</strong>
+</div>
