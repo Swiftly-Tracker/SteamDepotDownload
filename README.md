@@ -191,16 +191,6 @@ The flow:
 2. When a batch is ready, open a PR from **`beta` → `main`**. Merging it publishes the stable release and pushes the NuGet package.
 3. `beta` is then automatically force-reset onto `main`, so the next cycle starts clean. If you keep a local `beta`, run `git fetch && git reset --hard origin/beta` after each stable release.
 
-Versions come from [GitVersion](https://gitversion.net/) (`gitversion.yml`) — **never edit a version number by hand.** Control the bump from your commit message:
-
-```
-+semver: major     (or: breaking)
-+semver: minor     (or: feature)
-+semver: patch     (or: fix)
-```
-
-Without a trailer, `main` increments the patch version and `beta` increments its prerelease counter.
-
 ## Architecture
 
 ```
@@ -217,7 +207,7 @@ SteamDepotDownload/
 │   └── src/Application.cs
 ├── SteamDepotDownload.csproj        # NuGet packaging front
 ├── Directory.Build.props            # Shared metadata + version
-└── gitversion.yml                   # Versioning rules
+└── GitVersion.yml                   # Versioning rules
 ```
 
 ## Community
