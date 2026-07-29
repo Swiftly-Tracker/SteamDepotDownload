@@ -30,7 +30,7 @@ jobs:
       id: version_step
       uses: gittools/actions/gitversion/execute@v3.2.1
       with:
-        configFilePath: GitVersion.yml
+        configFilePath: gitversion.yml
 
   build:
     needs: versioning
