@@ -1,0 +1,6 @@
+<Solution>
+    <Project Path="SteamDepotDownload.Tier0/SteamDepotDownload.Tier0.csproj" />
+    <Project Path="SteamDepotDownload.Steam/SteamDepotDownload.Steam.csproj" />
+    <Project Path="SteamDepotDownload.App/SteamDepotDownload.App.csproj" />
+    <Project Path="SteamDepotDownload.csproj" />
+</Solution>

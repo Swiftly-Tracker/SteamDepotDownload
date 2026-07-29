@@ -1,0 +1,37 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>SteamDepotDownload</PackageId>
+    <Authors>Swiftly Solution</Authors>
+    <RootNamespace>SteamDepotDownload</RootNamespace>
+    <PackageProjectUrl>https://github.com/Swiftly-Tracker/SteamDepotDownload</PackageProjectUrl>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
+    <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <BaseOutputPath>build\</BaseOutputPath>
+    <OutputPath>$(BaseOutputPath)Release\SteamDepotDownload</OutputPath>
+    <AssemblyName>SteamDepotDownload</AssemblyName>
+    <GenerateRuntimeConfigurationFiles>true</GenerateRuntimeConfigurationFiles>
+    <PlatformTarget>x64</PlatformTarget>
+
+    <DebugType>portable</DebugType>
+
+    <DefaultItemExcludes>$(DefaultItemExcludes);**\obj\**;**\bin\**;build\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="SteamDepotDownload.Steam\SteamDepotDownload.Steam.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+    <ProjectReference Include="SteamDepotDownload.App\SteamDepotDownload.App.csproj" ReferenceOutputAssembly="false" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="**\*.cs" />
+  </ItemGroup>
+
+</Project>
