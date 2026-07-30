@@ -11,6 +11,21 @@ public class Application
 {
     public static async Task<int> Main(string[] args)
     {
+        var previousEncoding = Console.OutputEncoding;
+        ConsoleEncoding.EnsureUtf8();
+
+        try
+        {
+            return await RunAsync(args).ConfigureAwait(false);
+        }
+        finally
+        {
+            ConsoleEncoding.Restore(previousEncoding);
+        }
+    }
+
+    private static async Task<int> RunAsync(string[] args)
+    {
         InterfaceSystem.LoadModule("SteamDepotDownload.Tier0");
         InterfaceSystem.LoadModule("SteamDepotDownload.Steam");
 

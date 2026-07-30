@@ -31,7 +31,7 @@ internal sealed class CTerminal : ITerminal, ICommandSink
     private readonly StringBuilder _frame = new();
     private readonly IAnsiConsole _ansi;
 
-    private readonly TextWriter _stdout = Console.Out;
+    private TextWriter _stdout = TextWriter.Null;
 
     private bool _running;
     private string _input = string.Empty;
@@ -188,8 +188,8 @@ internal sealed class CTerminal : ITerminal, ICommandSink
     {
         _running = true;
 
-        var previousEncoding = System.Console.OutputEncoding;
-        System.Console.OutputEncoding = Encoding.UTF8;
+        ConsoleEncoding.EnsureUtf8();
+        _stdout = System.Console.Out;
 
         // Alternate screen buffer, autowrap off (so long lines don't break the layout).
         System.Console.Write($"{Csi}?1049h{Csi}?7l");
@@ -382,7 +382,7 @@ internal sealed class CTerminal : ITerminal, ICommandSink
             _live = false;
             TerminalOutput.Writer = null;
             System.Console.Write($"{Csi}?7h{Csi}?25h{Csi}?1049l");
-            System.Console.OutputEncoding = previousEncoding;
+            _stdout = TextWriter.Null;
         }
     }
 
