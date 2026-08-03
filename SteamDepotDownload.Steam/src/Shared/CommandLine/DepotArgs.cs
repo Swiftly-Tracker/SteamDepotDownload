@@ -7,6 +7,8 @@ public enum DownloadTargetKind
 {
     None,
     App,
+    Pubfile,
+    Ugc,
 }
 
 public sealed record DepotArgs
@@ -22,6 +24,10 @@ public sealed record DepotArgs
     public uint AppId { get; init; }
 
     public AppDownloadRequest? Request { get; init; }
+
+    public ulong PublishedFileId { get; init; }
+
+    public ulong UgcId { get; init; }
 
     public bool ShowVersion { get; init; }
 

@@ -37,6 +37,10 @@ internal static class CDepotCommands
 
         _ = new ConCommand("download_app", DownloadApp,
             "Download an app: download_app <appid> [depotid [manifestid]] ...");
+        _ = new ConCommand("download_pubfile", DownloadPubfile,
+            "Download a Workshop item: download_pubfile <publishedfileid>.");
+        _ = new ConCommand("download_ugc", DownloadUgc,
+            "Download a raw UGC handle: download_ugc <appid> <ugcid>.");
 
         _ = new ConCommand("download_status", DownloadStatus, "List download jobs and their progress.");
         _ = new ConCommand("download_cancel", DownloadCancel,
@@ -304,6 +308,67 @@ internal static class CDepotCommands
         });
 
         ctx.Print($"[{id}] downloading app {appId}.");
+    }
+
+    private static void DownloadPubfile(CommandContext ctx)
+    {
+        if (ctx.Args.Length == 0 || !ulong.TryParse(ctx.Args[0], out var publishedFileId))
+        {
+            ctx.Warn("Usage: download_pubfile <publishedfileid>");
+            return;
+        }
+
+        DownloadConfig config;
+
+        try
+        {
+            config = BuildConfig();
+        }
+        catch (DepotDownloadException ex)
+        {
+            ctx.Warn(ex.Message);
+            return;
+        }
+
+        var id = Jobs.Start($"download pubfile {publishedFileId}", async (progress, ct) =>
+        {
+            var session = await CSessionHolder.RequireAsync(ct).ConfigureAwait(false);
+            await session.CreateDownloader(config).DownloadPubfileAsync(publishedFileId, progress, ct)
+                .ConfigureAwait(false);
+        });
+
+        ctx.Print($"[{id}] downloading pubfile {publishedFileId}.");
+    }
+
+    private static void DownloadUgc(CommandContext ctx)
+    {
+        if (ctx.Args.Length < 2 || !uint.TryParse(ctx.Args[0], out var appId) ||
+            !ulong.TryParse(ctx.Args[1], out var ugcId))
+        {
+            ctx.Warn("Usage: download_ugc <appid> <ugcid>");
+            return;
+        }
+
+        DownloadConfig config;
+
+        try
+        {
+            config = BuildConfig();
+        }
+        catch (DepotDownloadException ex)
+        {
+            ctx.Warn(ex.Message);
+            return;
+        }
+
+        var id = Jobs.Start($"download ugc {ugcId}", async (progress, ct) =>
+        {
+            var session = await CSessionHolder.RequireAsync(ct).ConfigureAwait(false);
+            await session.CreateDownloader(config).DownloadUgcAsync(appId, ugcId, progress, ct)
+                .ConfigureAwait(false);
+        });
+
+        ctx.Print($"[{id}] downloading ugc {ugcId}.");
     }
 
     private static void DownloadStatus(CommandContext ctx)

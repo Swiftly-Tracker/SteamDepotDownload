@@ -152,9 +152,18 @@ public class Application
 
             var progress = new Progress<DownloadProgress>(ReportProgress);
 
-            var result = await downloader
-                .DownloadAppAsync(parsed.Request!, progress, cancellation.Token)
-                .ConfigureAwait(false);
+            var result = parsed.Target switch
+            {
+                DownloadTargetKind.Pubfile => await downloader
+                    .DownloadPubfileAsync(parsed.PublishedFileId, progress, cancellation.Token)
+                    .ConfigureAwait(false),
+                DownloadTargetKind.Ugc => await downloader
+                    .DownloadUgcAsync(parsed.AppId, parsed.UgcId, progress, cancellation.Token)
+                    .ConfigureAwait(false),
+                _ => await downloader
+                    .DownloadAppAsync(parsed.Request!, progress, cancellation.Token)
+                    .ConfigureAwait(false),
+            };
 
             Summarize(result);
             return 0;

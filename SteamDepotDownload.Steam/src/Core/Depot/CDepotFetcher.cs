@@ -41,6 +41,114 @@ internal sealed class CDepotFetcher : IDepotFetcher
         return await _resolver.DescribeAsync(request, ct).ConfigureAwait(false);
     }
 
+    public async Task<DownloadResult> DownloadPubfileAsync(ulong publishedFileId,
+        IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
+    {
+        await _session.EnsureConnectedAsync(ct).ConfigureAwait(false);
+
+        var details = await _session.GetPublishedFileDetailsAsync(publishedFileId, ct).ConfigureAwait(false);
+
+        if (details == null || details.consumer_appid == 0)
+        {
+            throw new DepotDownloadException(
+                $"Published file {publishedFileId} does not exist or is not visible.");
+        }
+
+        return await DownloadUgcContentAsync(details.consumer_appid, details.hcontent_file,
+            details.file_url, details.filename, ct).ConfigureAwait(false);
+    }
+
+    public async Task<DownloadResult> DownloadUgcAsync(uint appId, ulong ugcId,
+        IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
+    {
+        await _session.EnsureConnectedAsync(ct).ConfigureAwait(false);
+
+        var details = await _session.GetUgcDetailsAsync(ugcId, ct).ConfigureAwait(false);
+        var resolvedAppId = details.AppID != 0 ? details.AppID : appId;
+
+        return await DownloadUgcContentAsync(resolvedAppId, ugcId, details.URL, details.FileName, ct)
+            .ConfigureAwait(false);
+    }
+
+    private async Task<DownloadResult> DownloadUgcContentAsync(uint appId, ulong contentId,
+        string? fileUrl, string? fileName, CancellationToken ct)
+    {
+        if (!string.IsNullOrEmpty(fileUrl))
+        {
+            return await DownloadWebFileAsync(appId, contentId, fileName, fileUrl, ct).ConfigureAwait(false);
+        }
+
+        if (contentId is 0 or DepotConstants.InvalidManifestId)
+        {
+            throw new DepotDownloadException("No downloadable content was found for this item.");
+        }
+
+        var key = await _session.GetDepotKeyAsync(appId, appId, ct).ConfigureAwait(false)
+            ?? throw new DepotDownloadException($"No decryption key available for app {appId}'s Workshop content.");
+
+        var depot = new CResolvedDepot
+        {
+            DepotId = appId,
+            AppId = appId,
+            ManifestId = contentId,
+            Branch = DepotConstants.PublicBranch,
+            InstallDirectory = _resolver.CreateDirectories(appId, 0),
+            DepotKey = key,
+        };
+
+        using var pool = new CCdnServerPool(_session, appId);
+        await pool.RefreshAsync(Config.CellId == 0 ? null : Config.CellId, ct).ConfigureAwait(false);
+
+        var expectedFiles = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var summary = await DownloadDepotAsync(pool, depot, null, expectedFiles, ct).ConfigureAwait(false);
+
+        return new DownloadResult
+        {
+            Depots = [summary],
+            BytesDownloaded = summary.BytesDownloaded,
+            BytesTotal = summary.BytesTotal,
+        };
+    }
+
+    private async Task<DownloadResult> DownloadWebFileAsync(uint appId, ulong contentId, string? fileName,
+        string url, CancellationToken ct)
+    {
+        var directory = _resolver.CreateDirectories(appId, 0);
+        var name = string.IsNullOrEmpty(fileName) ? contentId.ToString() : Path.GetFileName(fileName);
+        var path = Path.Combine(directory, name);
+
+        using var http = CHttpFactory.Create();
+        using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
+            .ConfigureAwait(false);
+        response.EnsureSuccessStatusCode();
+
+        await using (var target = File.Create(path))
+        await using (var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false))
+        {
+            await source.CopyToAsync(target, ct).ConfigureAwait(false);
+        }
+
+        var bytes = (ulong)new FileInfo(path).Length;
+
+        return new DownloadResult
+        {
+            Depots =
+            [
+                new DepotDownloadSummary
+                {
+                    DepotId = appId,
+                    ManifestId = contentId,
+                    InstallDirectory = directory,
+                    BytesDownloaded = bytes,
+                    BytesTotal = bytes,
+                    FilesDownloaded = 1,
+                },
+            ],
+            BytesDownloaded = bytes,
+            BytesTotal = bytes,
+        };
+    }
+
     public async Task<string> DumpManifestAsync(uint appId, uint depotId, ulong manifestId, string branch,
         CancellationToken ct = default)
     {

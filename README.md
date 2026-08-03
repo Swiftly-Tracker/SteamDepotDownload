@@ -13,12 +13,12 @@ Uses [SteamKit2](https://github.com/SteamRE/SteamKit) to pull directly from Stea
 
 Grab an archive from the [latest release](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest):
 
-| Archive | Needs .NET installed? | Use when |
-| --- | --- | --- |
-| [`SteamDepotDownload-win-x64.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-win-x64.zip) | No | Windows, just run it |
-| [`SteamDepotDownload-linux-x64.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-linux-x64.zip) | No | Linux, just run it |
-| [`SteamDepotDownload-win-x64-portable.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-win-x64-portable.zip) | .NET 10 runtime | Windows, smaller download |
-| [`SteamDepotDownload-linux-x64-portable.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-linux-x64-portable.zip) | .NET 10 runtime | Linux, smaller download |
+| Archive                                                                                                                                                                 | Needs .NET installed? | Use when                  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- | ------------------------- |
+| [`SteamDepotDownload-win-x64.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-win-x64.zip)                       | No                    | Windows, just run it      |
+| [`SteamDepotDownload-linux-x64.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-linux-x64.zip)                   | No                    | Linux, just run it        |
+| [`SteamDepotDownload-win-x64-portable.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-win-x64-portable.zip)     | .NET 10 runtime       | Windows, smaller download |
+| [`SteamDepotDownload-linux-x64-portable.zip`](https://github.com/Swiftly-Tracker/SteamDepotDownload/releases/latest/download/SteamDepotDownload-linux-x64-portable.zip) | .NET 10 runtime       | Linux, smaller download   |
 
 Those links always resolve to the newest stable release. On Linux, `chmod +x SteamDepotDownload.App` after unzipping.
 
@@ -30,35 +30,46 @@ dotnet add package SteamDepotDownload
 
 ## Layout
 
-| Project | Purpose |
-| --- | --- |
-| `SteamDepotDownload.Tier0` | Core framework: interface registry, ConVars, ConCommands, logging, terminal REPL. |
-| `SteamDepotDownload.Steam` | Downloader library. Public API in `src/Shared/`, implementation in `src/Core/`. |
-| `SteamDepotDownload.App` | CLI entry point. One-shot download when you pass a target, or interactive terminal. |
+| Project                    | Purpose                                                                             |
+| -------------------------- | ----------------------------------------------------------------------------------- |
+| `SteamDepotDownload.Tier0` | Core framework: interface registry, ConVars, ConCommands, logging, terminal REPL.   |
+| `SteamDepotDownload.Steam` | Downloader library. Public API in `src/Shared/`, implementation in `src/Core/`.     |
+| `SteamDepotDownload.App`   | CLI entry point. One-shot download when you pass a target, or interactive terminal. |
 
 ## Quick start
 
 Download Steamworks Redist (app 1007) to a custom directory:
+
 ```bash
 ./SteamDepotDownload.App -app 1007 -depot 1004 -dir ./redist
 ```
 
+Download a Workshop item (its owning app is looked up automatically):
+
+```bash
+./SteamDepotDownload.App -pubfile 3070917341 -dir ./workshop-item
+```
+
 Just dump the manifest without downloading:
+
 ```bash
 ./SteamDepotDownload.App -app 1007 -manifest-only
 ```
 
 Verify existing files and re-download changed chunks:
+
 ```bash
 ./SteamDepotDownload.App -username alice -app 440 -depot 441 -validate
 ```
 
 See what a previous download left on disk, without touching the network:
+
 ```bash
 ./SteamDepotDownload.App -status -dir ./redist
 ```
 
 Show all available flags:
+
 ```bash
 ./SteamDepotDownload.App -help
 ```
@@ -81,22 +92,26 @@ redist/
 
 `depot_status` (or `-status`) prints the state file's contents without contacting Steam, and `-manifest-only` writes a plain-text listing of any manifest.
 
+`-pubfile`/`-ugc` downloads land the same way, under `depots/<appid>/0/` by default - a Workshop item's depot id is its owning app's id, so `0` stands in for the (not applicable) build id. Items hosted as a plain file rather than CDN chunks are fetched directly instead.
+
 ## Filter which files to download
 
 Use `-filelist <file>` (or the `depot_filelist` ConVar in the terminal) to download only specific files.
 
 **Format 1: Plain list** (one rule per line, applies to all depots)
+
 ```
 bin/win64/client.dll
 regex:.+?_dir\.vpk
 ```
 
 **Format 2: JSON per-depot** (pick depots and rules separately)
+
 ```json
 {
-    "2347770": ["regex:.+?\\.(inf|dll)"],
-    "2347771": ["regex:.+?\\.(dll|exe)"],
-    "2347773": ["regex:.+?\\.(sh|so)"]
+  "2347770": ["regex:.+?\\.(inf|dll)"],
+  "2347771": ["regex:.+?\\.(dll|exe)"],
+  "2347773": ["regex:.+?\\.(sh|so)"]
 }
 ```
 
@@ -107,21 +122,25 @@ Use literal paths for exact files (matched case-insensitively), `regex:` for pat
 ## Interactive terminal
 
 Run with no target to get a REPL:
+
 ```bash
 ./SteamDepotDownload.App
 ```
 
 Try commands:
+
 ```
 steam_login_anonymous
 depot_filelist ./depots.json
 download_app 730
+download_pubfile 3070917341
 download_status
 download_cancel
 depot_status
 ```
 
 Every CLI flag has a matching `depot_*` ConVar (run `convars` to list). So you can also:
+
 ```bash
 ./SteamDepotDownload.App -depot_max_downloads 16 +download_app 1007
 ```
@@ -180,10 +199,10 @@ dotnet publish SteamDepotDownload.App/SteamDepotDownload.App.csproj -c Release \
 
 ## Releases & branches
 
-| Branch | Publishes | Tag |
-| --- | --- | --- |
-| `main` | Stable release | `vX.Y.Z` |
-| `beta` | Prerelease | `vX.Y.Z-beta.N` |
+| Branch | Publishes      | Tag             |
+| ------ | -------------- | --------------- |
+| `main` | Stable release | `vX.Y.Z`        |
+| `beta` | Prerelease     | `vX.Y.Z-beta.N` |
 
 The flow:
 

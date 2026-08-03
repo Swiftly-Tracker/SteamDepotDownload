@@ -25,6 +25,8 @@ public static class DepotUsage
 
         Downloading
           -app <#>               app to download
+          -pubfile <id>          Workshop item to download (looks up its owning app itself)
+          -ugc <id>              raw UGC content id to download; needs -app
           -depot <#>             depot to download; repeat for several
           -manifest <id>         manifest for the preceding -depot
           -branch <name>         branch to download from (default: public; alias: -beta)

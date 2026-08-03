@@ -20,6 +20,8 @@ internal sealed class CSteamSession : ISteamSession
     private readonly SteamUser _user;
     private readonly SteamApps _apps;
     private readonly SteamContent _content;
+    private readonly SteamCloud _cloud;
+    private readonly SteamUnifiedMessages _unifiedMessages;
 
     private readonly SteamCredentials _credentials;
     private readonly SteamSessionOptions _options;
@@ -69,6 +71,8 @@ internal sealed class CSteamSession : ISteamSession
         _user = _client.GetHandler<SteamUser>() ?? throw new DepotDownloadException("SteamKit is missing its SteamUser handler.");
         _apps = _client.GetHandler<SteamApps>() ?? throw new DepotDownloadException("SteamKit is missing its SteamApps handler.");
         _content = _client.GetHandler<SteamContent>() ?? throw new DepotDownloadException("SteamKit is missing its SteamContent handler.");
+        _cloud = _client.GetHandler<SteamCloud>() ?? throw new DepotDownloadException("SteamKit is missing its SteamCloud handler.");
+        _unifiedMessages = _client.GetHandler<SteamUnifiedMessages>() ?? throw new DepotDownloadException("SteamKit is missing its SteamUnifiedMessages handler.");
 
         _subscriptions.Add(_manager.Subscribe<SteamClient.ConnectedCallback>(OnConnected));
         _subscriptions.Add(_manager.Subscribe<SteamClient.DisconnectedCallback>(OnDisconnected));
@@ -508,6 +512,32 @@ internal sealed class CSteamSession : ISteamSession
 
         _cdnAuthTokens[(depotId, host)] = result.Token;
         return result.Token;
+    }
+
+    internal async Task<PublishedFileDetails?> GetPublishedFileDetailsAsync(ulong publishedFileId, CancellationToken ct)
+    {
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+
+        var service = _unifiedMessages.CreateService<PublishedFile>();
+        var request = new CPublishedFile_GetDetails_Request();
+        request.publishedfileids.Add(publishedFileId);
+
+        var response = await service.GetDetails(request).ToTask().WaitAsync(ct).ConfigureAwait(false);
+
+        if (response.Result != EResult.OK)
+        {
+            throw new DepotDownloadException(
+                $"Could not fetch details for published file {publishedFileId}: {response.Result}.");
+        }
+
+        var details = response.Body.publishedfiledetails.FirstOrDefault();
+        return details?.result == (uint)EResult.OK ? details : null;
+    }
+
+    internal async Task<SteamCloud.UGCDetailsCallback> GetUgcDetailsAsync(ulong ugcId, CancellationToken ct)
+    {
+        await EnsureConnectedAsync(ct).ConfigureAwait(false);
+        return await _cloud.RequestUGCDetails(ugcId).ToTask().WaitAsync(ct).ConfigureAwait(false);
     }
 
     internal async Task<IReadOnlyCollection<Server>> GetContentServersAsync(uint? cellId, CancellationToken ct)

@@ -10,7 +10,7 @@ public static class DepotArgsParser
     private static readonly HashSet<string> ValueFlags = new(StringComparer.OrdinalIgnoreCase)
     {
         "username", "user", "password", "pass", "loginid",
-        "app", "depot", "manifest", "branch", "beta", "betabranch",
+        "app", "depot", "manifest", "pubfile", "ugc", "branch", "beta", "betabranch",
         "branchpassword", "betapassword",
         "dir", "filelist", "cellid", "max-downloads", "os", "osarch", "language",
     };
@@ -262,7 +262,44 @@ public static class DepotArgsParser
             hasApp = false;
         }
 
-        if (hasApp)
+        var publishedFileId = 0ul;
+        var hasPubfile = values.TryGetValue("pubfile", out var pubfileText);
+
+        if (hasPubfile && !ulong.TryParse(pubfileText, NumberStyles.Integer, CultureInfo.InvariantCulture, out publishedFileId))
+        {
+            errors.Add($"-pubfile expects a number, got '{pubfileText}'.");
+            hasPubfile = false;
+        }
+
+        var ugcId = 0ul;
+        var hasUgc = values.TryGetValue("ugc", out var ugcText);
+
+        if (hasUgc && !ulong.TryParse(ugcText, NumberStyles.Integer, CultureInfo.InvariantCulture, out ugcId))
+        {
+            errors.Add($"-ugc expects a number, got '{ugcText}'.");
+            hasUgc = false;
+        }
+
+        if (hasPubfile && hasUgc)
+        {
+            errors.Add("-pubfile and -ugc cannot be combined.");
+        }
+        else if (hasPubfile)
+        {
+            target = DownloadTargetKind.Pubfile;
+        }
+        else if (hasUgc)
+        {
+            if (!hasApp)
+            {
+                errors.Add("-ugc needs -app to say which game it belongs to.");
+            }
+            else
+            {
+                target = DownloadTargetKind.Ugc;
+            }
+        }
+        else if (hasApp)
         {
             target = DownloadTargetKind.App;
         }
@@ -316,6 +353,8 @@ public static class DepotArgsParser
             Target = target,
             AppId = appId,
             Request = request,
+            PublishedFileId = publishedFileId,
+            UgcId = ugcId,
             Debug = debug,
             ShowStatus = flags.Contains("status"),
             UnknownArguments = unknown,
