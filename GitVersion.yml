@@ -12,5 +12,5 @@ commit-message-incrementing: Enabled
 major-version-bump-message: '\+semver:\s?(breaking|major)'
 minor-version-bump-message: '\+semver:\s?(feature|minor)'
 patch-version-bump-message: '\+semver:\s?(fix|patch)'
-tag-prefix: ''
+tag-prefix: 'v'
 commit-date-format: yyyy-MM-dd
