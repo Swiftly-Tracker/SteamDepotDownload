@@ -102,22 +102,38 @@ Use `-filelist <file>` (or the `depot_filelist` ConVar in the terminal) to downl
 
 ```
 bin/win64/client.dll
+regex:.+?\.dll
 regex:.+?_dir\.vpk
+vpk:txt,cfg
+materials/models/foo.vmt
 ```
 
 **Format 2: JSON per-depot** (pick depots and rules separately)
 
 ```json
 {
-  "2347770": ["regex:.+?\\.(inf|dll)"],
-  "2347771": ["regex:.+?\\.(dll|exe)"],
-  "2347773": ["regex:.+?\\.(sh|so)"]
+  "2347770": [
+    "vpk:txt,lua,kv3,db,gameevents,vcss_c,vjs_c,vts_c,vxml_c,vsndevts_c,vsndstck_c,vpulse_c,vdata_c",
+    "regex:.+?\\.(kv3|txt|jpg|png|gif|inf|gi|fgd|dll|cfg|vcfg)",
+    "regex:.+?maps.+?\\.vpk",
+    "regex:.+?_dir\\.vpk",
+    "regex:.+?shaders_vulkan_[0-9]+\\.vpk"
+  ],
+  "2347771": ["regex:.+?\\.(dll|exe)", "regex:.+?_dir\\.vpk"]
 }
 ```
 
-The JSON format also **selects which depots to download**. Naming a depot in the map is like passing `-depot` — you get it even if it doesn't match your platform. So the example pulls the Linux depot (2347773) even on Windows. Omit a depot and it won't download.
+The JSON format also **selects which depots to download**. Naming a depot in the map is like passing `-depot` - you get it even if it doesn't match your platform. Omit a depot and it won't download.
 
 Use literal paths for exact files (matched case-insensitively), `regex:` for patterns. Literals are full manifest paths; regex matches anywhere.
+
+### Unpacking VPKs on the fly
+
+`vpk:` isn't a path pattern - it's a per-depot directive: "unpack any `.vpk` archive this depot ends up downloading." What actually gets downloaded is still entirely up to your other `regex:`/literal rules (`_dir.vpk`, single-file `maps*.vpk`, standalone `shaders_vulkan_N.vpk`, whatever). Once one of those matched archives is fully on disk - including a split archive's numbered companions (`pak01_000.vpk`, `pak01_001.vpk`, ...), which get pulled in automatically alongside its `_dir.vpk` - it's extracted next to it.
+
+`vpk:` takes an optional comma-separated extension allow-list (no dots): `vpk:txt,lua,kv3,...` keeps only entries with those extensions and skips the rest. A bare `vpk:` with no list extracts everything. Depots without a `vpk:` rule leave their VPKs packed, even if `_dir.vpk` still downloads.
+
+Plain literal/`regex:` rules get a second life too: if a rule never matches a real top-level file in the depot, it's tried against the _inner_ paths of every `_dir.vpk` the depot has. A rule like `materials/models/foo.vmt` above reaches into whichever VPK actually contains that asset and pulls just that one file out - without downloading the depot's other VPKs, and without downloading a VPK's numbered companions at all unless something inside it actually matched. This works because a `_dir.vpk` carries the full entry list up front; only that small file needs fetching to know whether the rest is worth pulling. (This inner-path search only works for split `_dir.vpk` archives, not single-file VPKs, since a single-file VPK has no lightweight metadata-only file to peek at.)
 
 ## Interactive terminal
 

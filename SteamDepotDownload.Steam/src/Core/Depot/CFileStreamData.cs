@@ -4,13 +4,15 @@ internal sealed class CFileStreamData
 {
     private readonly SemaphoreSlim _lock = new(1, 1);
     private readonly string _path;
+    private readonly Action? _onComplete;
     private FileStream? _stream;
     private int _remaining;
 
-    internal CFileStreamData(string path, int chunksToDownload)
+    internal CFileStreamData(string path, int chunksToDownload, Action? onComplete = null)
     {
         _path = path;
         _remaining = chunksToDownload;
+        _onComplete = onComplete;
     }
 
     internal async Task WriteAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct)
@@ -47,6 +49,8 @@ internal sealed class CFileStreamData
         {
             _lock.Release();
         }
+
+        _onComplete?.Invoke();
     }
 
     internal void CloseNow()

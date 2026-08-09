@@ -14,17 +14,20 @@ internal sealed class CFilePlanner
     private readonly Dictionary<string, DepotManifest.FileData> _previous;
     private readonly CDownloadCounter _counter;
     private readonly string _installRoot;
+    private readonly IReadOnlyDictionary<string, CVpkGroupTracker>? _vpkGroups;
 
     private readonly ConcurrentDictionary<string, byte> _expectedFiles =
         new(StringComparer.OrdinalIgnoreCase);
 
     internal CFilePlanner(CResolvedDepot depot, DownloadConfig config, CManifestData manifest,
-        CManifestData? previous, CDownloadCounter counter)
+        CManifestData? previous, CDownloadCounter counter,
+        IReadOnlyDictionary<string, CVpkGroupTracker>? vpkGroups = null)
     {
         _depot = depot;
         _config = config;
         _manifest = manifest;
         _counter = counter;
+        _vpkGroups = vpkGroups;
         _installRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(depot.InstallDirectory));
 
         _previous = previous?.Files
@@ -73,6 +76,8 @@ internal sealed class CFilePlanner
         var finalPath = ResolvePath(file.FileName);
         _expectedFiles.TryAdd(finalPath, 0);
 
+        var vpkGroup = _vpkGroups?.GetValueOrDefault(NormalizeKey(file.FileName));
+
         var directory = Path.GetDirectoryName(finalPath);
         if (!string.IsNullOrEmpty(directory))
         {
@@ -83,6 +88,7 @@ internal sealed class CFilePlanner
         {
             _counter.SubtractTotal(file.TotalSize);
             _counter.FileSkipped();
+            vpkGroup?.MarkFileDone();
             return;
         }
 
@@ -93,13 +99,14 @@ internal sealed class CFilePlanner
             _counter.SubtractTotal(file.TotalSize);
             _counter.FileSkipped();
             ApplyFlags(file, finalPath);
+            vpkGroup?.MarkFileDone();
             return;
         }
 
         var neededBytes = needed.Aggregate(0UL, (sum, chunk) => sum + chunk.UncompressedLength);
         _counter.SubtractTotal(file.TotalSize - Math.Min(file.TotalSize, neededBytes));
 
-        var stream = new CFileStreamData(finalPath, needed.Count);
+        var stream = new CFileStreamData(finalPath, needed.Count, vpkGroup == null ? null : vpkGroup.MarkFileDone);
 
         foreach (var chunk in needed)
         {

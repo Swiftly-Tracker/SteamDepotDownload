@@ -276,7 +276,16 @@ internal sealed class CDepotFetcher : IDepotFetcher
             CancellationToken = ct,
         };
 
-        var planner = new CFilePlanner(depot, Config, manifest, previous, counter);
+        var vpkPlan = await new CVpkExtractionPlanner(_session, pool, depot, Config, manifest, previous)
+            .PlanAsync(options, ct).ConfigureAwait(false);
+
+        var effectiveConfig = vpkPlan.ForceIncludePaths.Count > 0
+            ? Config with { FileFilter = Config.FileFilter!.WithForcedIncludes(depot.DepotId, vpkPlan.ForceIncludePaths) }
+            : Config;
+
+        var vpkGroupTrackers = CVpkExtractionPlanner.BuildGroupTrackers(vpkPlan, depot.InstallDirectory);
+
+        var planner = new CFilePlanner(depot, effectiveConfig, manifest, previous, counter, vpkGroupTrackers);
         var queue = new ConcurrentQueue<CPendingChunk>();
 
         await planner.PrepareAsync(queue, options, ct).ConfigureAwait(false);
@@ -288,6 +297,22 @@ internal sealed class CDepotFetcher : IDepotFetcher
 
         var pump = new CChunkPump(_session, pool, depot, counter);
         await pump.RunAsync(queue, options, ct).ConfigureAwait(false);
+
+        var extractionTasks = vpkGroupTrackers.Values.Distinct()
+            .Select(tracker => tracker.ExtractionTask)
+            .Where(extractionTask => extractionTask != null)
+            .Select(extractionTask => extractionTask!)
+            .ToList();
+
+        var extractionResults = await Task.WhenAll(extractionTasks).ConfigureAwait(false);
+
+        foreach (var paths in extractionResults)
+        {
+            foreach (var path in paths)
+            {
+                expectedFiles.Add(path);
+            }
+        }
 
         ApplyExecutableFlags(depot, manifest);
 

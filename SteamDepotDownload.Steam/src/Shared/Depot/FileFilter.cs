@@ -7,6 +7,8 @@ public sealed class FileFilter
 {
     private readonly HashSet<string> _literals = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<Regex> _patterns = [];
+    private readonly HashSet<string> _vpkExtensions = new(StringComparer.OrdinalIgnoreCase);
+    private bool _hasVpkRule;
     private readonly Dictionary<uint, FileFilter>? _perDepot;
 
     private FileFilter()
@@ -16,7 +18,7 @@ public sealed class FileFilter
     private FileFilter(Dictionary<uint, FileFilter> perDepot) => _perDepot = perDepot;
 
     public bool IsEmpty => _perDepot == null
-        ? _literals.Count == 0 && _patterns.Count == 0
+        ? _literals.Count == 0 && _patterns.Count == 0 && !_hasVpkRule
         : _perDepot.Count == 0;
 
     public bool IsPerDepot => _perDepot != null;
@@ -26,6 +28,10 @@ public sealed class FileFilter
     public IReadOnlyCollection<string> Literals => _literals;
 
     public IReadOnlyList<Regex> Patterns => _patterns;
+
+    public bool HasVpkRule => _hasVpkRule;
+
+    public IReadOnlyCollection<string> VpkExtensions => _vpkExtensions;
 
     public static FileFilter FromLines(IEnumerable<string> lines)
     {
@@ -45,6 +51,19 @@ public sealed class FileFilter
                 if (pattern.Length > 0)
                 {
                     filter._patterns.Add(new Regex(pattern, RegexOptions.Compiled | RegexOptions.IgnoreCase));
+                }
+
+                continue;
+            }
+
+            if (line.StartsWith("vpk:", StringComparison.OrdinalIgnoreCase))
+            {
+                filter._hasVpkRule = true;
+
+                var extensions = line["vpk:".Length..].Trim();
+                foreach (var extension in extensions.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+                {
+                    filter._vpkExtensions.Add(extension.TrimStart('.').ToLowerInvariant());
                 }
 
                 continue;
@@ -143,6 +162,49 @@ public sealed class FileFilter
         }
 
         return false;
+    }
+
+    public FileFilter? ForDepot(uint depotId)
+    {
+        if (_perDepot == null)
+        {
+            return this;
+        }
+
+        return _perDepot.TryGetValue(depotId, out var filter) ? filter : null;
+    }
+
+    public FileFilter WithForcedIncludes(uint depotId, IEnumerable<string> paths)
+    {
+        var extra = paths.Select(Normalize).ToList();
+        if (extra.Count == 0)
+        {
+            return this;
+        }
+
+        if (_perDepot == null)
+        {
+            var clone = new FileFilter();
+            clone._literals.UnionWith(_literals);
+            clone._patterns.AddRange(_patterns);
+            clone._vpkExtensions.UnionWith(_vpkExtensions);
+            clone._hasVpkRule = _hasVpkRule;
+            clone._literals.UnionWith(extra);
+            return clone;
+        }
+
+        var perDepot = new Dictionary<uint, FileFilter>(_perDepot);
+        var existing = perDepot.TryGetValue(depotId, out var sub) ? sub : new FileFilter();
+
+        var clonedSub = new FileFilter();
+        clonedSub._literals.UnionWith(existing._literals);
+        clonedSub._patterns.AddRange(existing._patterns);
+        clonedSub._vpkExtensions.UnionWith(existing._vpkExtensions);
+        clonedSub._hasVpkRule = existing._hasVpkRule;
+        clonedSub._literals.UnionWith(extra);
+
+        perDepot[depotId] = clonedSub;
+        return new FileFilter(perDepot);
     }
 
     private static string Normalize(string path) => path.Replace('\\', '/').TrimStart('/');
