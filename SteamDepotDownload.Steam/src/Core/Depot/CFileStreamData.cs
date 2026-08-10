@@ -8,8 +8,8 @@ internal sealed class CFileStreamData
     private readonly object _openLock = new();
     private readonly string _path;
     private readonly Action? _onComplete;
-    private readonly long _startTimestamp = Stopwatch.GetTimestamp();
     private SafeFileHandle? _handle;
+    private long _startTimestamp;
     private int _remaining;
 
     internal CFileStreamData(string path, int chunksToDownload, Action? onComplete = null)
@@ -36,7 +36,13 @@ internal sealed class CFileStreamData
 
         lock (_openLock)
         {
-            return _handle ??= File.OpenHandle(_path, FileMode.Open, FileAccess.Write, FileShare.Read,
+            if (_handle is { } existingLocked)
+            {
+                return existingLocked;
+            }
+
+            _startTimestamp = Stopwatch.GetTimestamp();
+            return _handle = File.OpenHandle(_path, FileMode.Open, FileAccess.Write, FileShare.Read,
                 FileOptions.Asynchronous);
         }
     }
