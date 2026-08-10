@@ -72,7 +72,7 @@ internal sealed class CCdnServerPool : IDisposable
         }
 
         CSteamLog.Detailed(CSteamLog.Cdn,
-            $"{usable.Count} content servers available for app {_appId}.");
+            $"{_servers.Count} content servers available for app {_appId}.");
 
         if (ring.Count == 0)
         {

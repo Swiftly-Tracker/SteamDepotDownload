@@ -552,13 +552,16 @@ internal sealed class CSteamSession : ISteamSession
         return await _cloud.RequestUGCDetails(ugcId).ToTask().WaitAsync(ct).ConfigureAwait(false);
     }
 
+    private const uint MaxContentServers = 999;
+
     internal async Task<IReadOnlyCollection<Server>> GetContentServersAsync(uint? cellId, CancellationToken ct)
     {
         using var _prof = CProfiler.Measure();
 
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
-        return await _content.GetServersForSteamPipe(cellId ?? CellId).WaitAsync(ct).ConfigureAwait(false);
+        return await _content.GetServersForSteamPipe(cellId ?? CellId, MaxContentServers)
+            .WaitAsync(ct).ConfigureAwait(false);
     }
 
     internal async Task<KeyValue?> GetPrivateBranchDepotsAsync(uint appId, string branch, string password,
