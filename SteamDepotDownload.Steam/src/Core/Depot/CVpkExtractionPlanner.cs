@@ -4,6 +4,7 @@ using SteamDepotDownload.Steam.Core.Diagnostics;
 using SteamDepotDownload.Steam.Shared.Depot;
 using SteamKit2;
 using VPKTools.Pak.Shared;
+using VPKTools.Pak.Shared.Formatting;
 using VPKTools.Tier0.Shared.Interfaces;
 
 namespace SteamDepotDownload.Steam.Core.Depot;
@@ -24,6 +25,7 @@ internal sealed class CVpkExtractionPlanner
 {
     private static readonly Regex VpkNameRegex = new(@"\.vpk$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex DirVpkNameRegex = new(@"_dir\.vpk$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex CompanionVpkRegex = new(@"^(.+)_\d+\.vpk$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string DirVpkSuffix = "_dir.vpk";
 
     private static readonly ConcurrentBag<IPakSystem> PakPool = [];
@@ -112,6 +114,63 @@ internal sealed class CVpkExtractionPlanner
         }
 
         return group;
+    }
+
+    internal static async Task<IReadOnlyList<string>> WriteListings(string installDirectory, CancellationToken ct)
+    {
+        using var _prof = CProfiler.Measure();
+
+        if (!Directory.Exists(installDirectory))
+        {
+            return [];
+        }
+
+        var written = new ConcurrentBag<string>();
+        var tasks = new List<Task>();
+
+        foreach (var vpkPath in Directory.EnumerateFiles(installDirectory, "*.vpk", SearchOption.AllDirectories))
+        {
+            ct.ThrowIfCancellationRequested();
+
+            var fileName = Path.GetFileName(vpkPath);
+            var directory = Path.GetDirectoryName(vpkPath)!;
+
+            var companion = CompanionVpkRegex.Match(fileName);
+            if (companion.Success && File.Exists(Path.Combine(directory, $"{companion.Groups[1].Value}_dir.vpk")))
+            {
+                continue;
+            }
+
+            tasks.Add(Task.Run(() =>
+            {
+                var outputPath = WriteListing(vpkPath);
+                if (outputPath != null)
+                {
+                    written.Add(outputPath);
+                }
+            }, ct));
+        }
+
+        await Task.WhenAll(tasks).ConfigureAwait(false);
+
+        return written.ToList();
+    }
+
+    private static string? WriteListing(string vpkPath)
+    {
+        var outputPath = Path.Combine(Path.GetDirectoryName(vpkPath)!, $"{Path.GetFileNameWithoutExtension(vpkPath)}.txt");
+
+        try
+        {
+            var lines = WithPak(vpkPath, pak => pak.GetEntries().Select(PakEntryFormatter.FormatLine).ToList());
+            File.WriteAllLines(outputPath, lines);
+            return outputPath;
+        }
+        catch (Exception ex)
+        {
+            CSteamLog.Warning(CSteamLog.Depot, $"Could not list {vpkPath}: {ex.Message}");
+            return null;
+        }
     }
 
     internal static Dictionary<string, CVpkGroupTracker> BuildGroupTrackers(CVpkExtractionPlan plan, string installDirectory)

@@ -328,6 +328,18 @@ internal sealed class CDepotFetcher : IDepotFetcher
             $"{label}: chunk download ({FormatBytes(counter.BytesDownloaded)}) took {stageWatch.Elapsed}.");
         stageWatch.Restart();
 
+        var listingPaths = await CVpkExtractionPlanner.WriteListings(depot.InstallDirectory, ct)
+            .ConfigureAwait(false);
+
+        foreach (var path in listingPaths)
+        {
+            expectedFiles.Add(path);
+        }
+
+        CSteamLog.Detailed(CSteamLog.Depot,
+            $"{label}: vpk listing ({listingPaths.Count} files) took {stageWatch.Elapsed}.");
+        stageWatch.Restart();
+
         var extractionTasks = vpkGroupTrackers.Values.Distinct()
             .Select(tracker => tracker.StartExtraction())
             .ToList();

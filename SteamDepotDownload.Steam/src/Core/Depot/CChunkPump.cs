@@ -13,7 +13,7 @@ internal sealed class CChunkPump
 {
     private const int MaxAttemptsPerChunk = 5;
 
-    private static readonly TimeSpan ChunkStallTimeout = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ChunkStallTimeout = TimeSpan.FromSeconds(45);
 
     private readonly CSteamSession _session;
     private readonly CCdnServerPool _pool;
@@ -94,8 +94,12 @@ internal sealed class CChunkPump
                 {
                     var watch = Stopwatch.StartNew();
 
+                    var downloadTaskProf = CProfiler.Measure("DownloadDepotChunkAsync");
+
                     var downloadTask = _pool.Client.DownloadDepotChunkAsync(_depot.DepotId, chunk, server,
                         buffer, _depot.DepotKey, _pool.ProxyServer, _cdnToken);
+
+                    downloadTaskProf.Dispose();
 
                     if (await Task.WhenAny(downloadTask, Task.Delay(ChunkStallTimeout, CancellationToken.None))
                         .ConfigureAwait(false) != downloadTask)
@@ -110,9 +114,13 @@ internal sealed class CChunkPump
 
                     RecordSuccess(server.Host, written, watch.ElapsedMilliseconds);
 
+                    var writeToDiskProf = CProfiler.Measure("WriteChunkToDiskAsync");
+
                     await pending.Stream
                         .WriteAsync((long)chunk.Offset, buffer.AsMemory(0, written), ct)
                         .ConfigureAwait(false);
+
+                    writeToDiskProf.Dispose();
 
                     _counter.AddDownloaded(chunk.UncompressedLength, pending.File.FileName);
                     return;
