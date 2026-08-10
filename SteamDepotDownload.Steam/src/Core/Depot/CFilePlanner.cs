@@ -64,21 +64,14 @@ internal sealed class CFilePlanner
         _counter.SetFilesRemaining(regularFiles.Count);
         _counter.Report(stage: "checking files");
 
-        var collected = new ConcurrentBag<CPendingChunk>();
-
         await Parallel.ForEachAsync(regularFiles, options, async (file, token) =>
         {
             await Task.Yield();
-            PrepareFile(file, collected, token);
+            PrepareFile(file, queue, token);
         }).ConfigureAwait(false);
-
-        foreach (var pending in collected.OrderBy(pending => pending.Chunk.CompressedLength))
-        {
-            queue.Enqueue(pending);
-        }
     }
 
-    private void PrepareFile(DepotManifest.FileData file, ConcurrentBag<CPendingChunk> collected,
+    private void PrepareFile(DepotManifest.FileData file, ConcurrentQueue<CPendingChunk> queue,
         CancellationToken ct)
     {
         using var _prof = CProfiler.Measure();
@@ -124,7 +117,7 @@ internal sealed class CFilePlanner
 
         foreach (var chunk in needed)
         {
-            collected.Add(new CPendingChunk(stream, file, chunk));
+            queue.Enqueue(new CPendingChunk(stream, file, chunk));
         }
 
         _counter.FileDownloaded();

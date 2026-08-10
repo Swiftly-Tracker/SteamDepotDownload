@@ -44,25 +44,35 @@ internal sealed class CChunkPump
 
         _counter.Report(stage: "downloading");
 
-        await Parallel.ForEachAsync(queue, options, async (pending, token) =>
+        try
         {
-            var succeeded = false;
+            await Parallel.ForEachAsync(queue, options, async (pending, token) =>
+            {
+                var succeeded = false;
 
-            try
-            {
-                await DownloadChunkAsync(pending, token).ConfigureAwait(false);
-                succeeded = true;
-            }
-            finally
-            {
-                var fileDone = pending.Stream.ChunkFinished();
-                if (fileDone && succeeded)
+                try
                 {
-                    _counter.FileCompleted("Downloaded", pending.File.FileName, pending.File.TotalSize,
-                        pending.Stream.Elapsed);
+                    await DownloadChunkAsync(pending, token).ConfigureAwait(false);
+                    succeeded = true;
                 }
+                finally
+                {
+                    var fileDone = pending.Stream.ChunkFinished();
+                    if (fileDone && succeeded)
+                    {
+                        _counter.FileCompleted("Downloaded", pending.File.FileName, pending.File.TotalSize,
+                            pending.Stream.Elapsed);
+                    }
+                }
+            }).ConfigureAwait(false);
+        }
+        finally
+        {
+            foreach (var stream in queue.Select(pending => pending.Stream).Distinct())
+            {
+                stream.CloseNow();
             }
-        }).ConfigureAwait(false);
+        }
 
         LogServerStats();
     }
