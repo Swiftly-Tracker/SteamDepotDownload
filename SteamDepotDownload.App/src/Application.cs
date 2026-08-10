@@ -151,7 +151,7 @@ public class Application
                 RemoveUnusedFiles = DepotDefaults.RemoveUnusedFiles,
             });
 
-            var progress = new Progress<DownloadProgress>(ReportProgress);
+            var progress = new Progress<DownloadProgress>(CreateProgressReporter());
 
             var result = parsed.Target switch
             {
@@ -209,22 +209,49 @@ public class Application
         }
     }
 
-    private static void ReportProgress(DownloadProgress progress)
+    private static Action<DownloadProgress> CreateProgressReporter()
     {
-        if (Console.IsOutputRedirected)
+        if (!Console.IsOutputRedirected)
         {
-            return;
+            return static _ => { };
         }
 
-        var line = progress.CurrentFile ?? progress.Stage ?? string.Empty;
-        var width = Math.Max(20, Console.WindowWidth - 12);
+        var lastPrint = DateTime.MinValue;
+        var lastFraction = -1.0;
 
-        if (line.Length > width)
+        return progress =>
         {
-            line = "..." + line[^(width - 3)..];
+            var now = DateTime.UtcNow;
+            var stalled = now - lastPrint >= TimeSpan.FromSeconds(5);
+            var advanced = progress.Fraction - lastFraction >= 0.05;
+
+            if (!stalled && !advanced && progress.Fraction < 1.0)
+            {
+                return;
+            }
+
+            lastPrint = now;
+            lastFraction = progress.Fraction;
+
+            var line = progress.CurrentFile ?? progress.Stage ?? string.Empty;
+            Console.WriteLine(
+                $"[{progress.Fraction,7:P1}] {FormatBytes(progress.BytesDownloaded)} / {FormatBytes(progress.BytesTotal)}  {line}");
+        };
+    }
+
+    private static string FormatBytes(ulong bytes)
+    {
+        string[] units = ["B", "KB", "MB", "GB", "TB"];
+        double value = bytes;
+        var unit = 0;
+
+        while (value >= 1024 && unit < units.Length - 1)
+        {
+            value /= 1024;
+            unit++;
         }
 
-        Console.Write($"\r{progress.Fraction,7:P1} {line}".PadRight(width + 8));
+        return $"{value:0.#} {units[unit]}";
     }
 
     private static void Summarize(DownloadResult result)

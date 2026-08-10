@@ -1,3 +1,4 @@
+using SteamDepotDownload.Steam.Core.Diagnostics;
 using SteamDepotDownload.Steam.Shared.Depot;
 
 namespace SteamDepotDownload.Steam.Core.Depot;
@@ -13,6 +14,7 @@ internal sealed class CDownloadCounter
     private long _bytesTotal;
     private int _filesDownloaded;
     private int _filesSkipped;
+    private long _filesRemaining;
 
     internal CDownloadCounter(uint depotId, string label,
         IProgress<DownloadProgress>? progress, Tier0.Shared.Logging.ILoggingTask? task)
@@ -38,6 +40,26 @@ internal sealed class CDownloadCounter
     internal void FileDownloaded() => Interlocked.Increment(ref _filesDownloaded);
 
     internal void FileSkipped() => Interlocked.Increment(ref _filesSkipped);
+
+    internal void SetFilesRemaining(int total) => Interlocked.Exchange(ref _filesRemaining, total);
+
+    internal void FileCompleted(string state, string fileName, ulong size, TimeSpan elapsed)
+    {
+        var left = Interlocked.Decrement(ref _filesRemaining);
+
+        var timingText = "";
+        if (elapsed > TimeSpan.Zero)
+        {
+            var speed = size / elapsed.TotalSeconds;
+            timingText = $", {CDepotFields.FormatBytes((ulong)speed)}/s, {FormatDuration(elapsed)}";
+        }
+
+        CSteamLog.Msg(CSteamLog.Depot,
+            $"[Depot {_depotId}] {state} {fileName} ({CDepotFields.FormatBytes(size)}{timingText}) ({left} files left)");
+    }
+
+    private static string FormatDuration(TimeSpan elapsed)
+        => elapsed.TotalSeconds < 1 ? $"{elapsed.TotalMilliseconds:0} ms" : $"{elapsed.TotalSeconds:0.##} s";
 
     internal void AddDownloaded(ulong bytes, string? currentFile)
     {

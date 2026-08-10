@@ -46,13 +46,21 @@ internal sealed class CChunkPump
 
         await Parallel.ForEachAsync(queue, options, async (pending, token) =>
         {
+            var succeeded = false;
+
             try
             {
                 await DownloadChunkAsync(pending, token).ConfigureAwait(false);
+                succeeded = true;
             }
             finally
             {
-                pending.Stream.ChunkFinished();
+                var fileDone = pending.Stream.ChunkFinished();
+                if (fileDone && succeeded)
+                {
+                    _counter.FileCompleted("Downloaded", pending.File.FileName, pending.File.TotalSize,
+                        pending.Stream.Elapsed);
+                }
             }
         }).ConfigureAwait(false);
 

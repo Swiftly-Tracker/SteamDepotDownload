@@ -61,6 +61,7 @@ internal sealed class CFilePlanner
             _counter.AddTotal(file.TotalSize);
         }
 
+        _counter.SetFilesRemaining(regularFiles.Count);
         _counter.Report(stage: "checking files");
 
         var collected = new ConcurrentBag<CPendingChunk>();
@@ -71,7 +72,7 @@ internal sealed class CFilePlanner
             PrepareFile(file, collected, token);
         }).ConfigureAwait(false);
 
-        foreach (var pending in collected.OrderBy(pending => pending.Chunk.UncompressedLength))
+        foreach (var pending in collected.OrderBy(pending => pending.Chunk.CompressedLength))
         {
             queue.Enqueue(pending);
         }
@@ -99,6 +100,7 @@ internal sealed class CFilePlanner
         {
             _counter.SubtractTotal(file.TotalSize);
             _counter.FileSkipped();
+            _counter.FileCompleted("Symlink", file.FileName, file.TotalSize, TimeSpan.Zero);
             vpkGroup?.MarkFileDone();
             return;
         }
@@ -109,6 +111,7 @@ internal sealed class CFilePlanner
         {
             _counter.SubtractTotal(file.TotalSize);
             _counter.FileSkipped();
+            _counter.FileCompleted("Validated", file.FileName, file.TotalSize, TimeSpan.Zero);
             ApplyFlags(file, finalPath);
             vpkGroup?.MarkFileDone();
             return;

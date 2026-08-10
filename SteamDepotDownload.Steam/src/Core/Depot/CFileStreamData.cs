@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using Microsoft.Win32.SafeHandles;
 
 namespace SteamDepotDownload.Steam.Core.Depot;
@@ -7,6 +8,7 @@ internal sealed class CFileStreamData
     private readonly object _openLock = new();
     private readonly string _path;
     private readonly Action? _onComplete;
+    private readonly long _startTimestamp = Stopwatch.GetTimestamp();
     private SafeFileHandle? _handle;
     private int _remaining;
 
@@ -16,6 +18,8 @@ internal sealed class CFileStreamData
         _remaining = chunksToDownload;
         _onComplete = onComplete;
     }
+
+    internal TimeSpan Elapsed => Stopwatch.GetElapsedTime(_startTimestamp);
 
     internal async Task WriteAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct)
     {
@@ -37,15 +41,16 @@ internal sealed class CFileStreamData
         }
     }
 
-    internal void ChunkFinished()
+    internal bool ChunkFinished()
     {
         if (Interlocked.Decrement(ref _remaining) > 0)
         {
-            return;
+            return false;
         }
 
         CloseNow();
         _onComplete?.Invoke();
+        return true;
     }
 
     internal void CloseNow()
