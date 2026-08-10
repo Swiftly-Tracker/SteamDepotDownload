@@ -20,7 +20,7 @@ public sealed record DepotArgsDefaults
 
     public string? FileList { get; init; }
 
-    public int MaxDownloads { get; init; } = 8;
+    public int MaxDownloads { get; init; } = 32;
 
     public uint CellId { get; init; }
 

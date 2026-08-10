@@ -28,6 +28,8 @@ internal sealed class CVpkExtractionPlanner
     private static readonly Regex CompanionVpkRegex = new(@"^(.+)_\d+\.vpk$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string DirVpkSuffix = "_dir.vpk";
 
+    private const ushort InlineArchiveIndex = 0x7FFF;
+
     private static readonly ConcurrentBag<IPakSystem> PakPool = [];
     private static readonly SemaphoreSlim PakPoolGate = new(Environment.ProcessorCount, Environment.ProcessorCount);
     private static readonly Lock ModuleLoadLock = new();
@@ -87,13 +89,8 @@ internal sealed class CVpkExtractionPlanner
                 builder.ExtensionFilter.UnionWith(extensionFilter);
             }
 
-            var archiveGroup = BuildArchiveGroup(vpk.FileName);
-            builder.ArchiveManifestPaths = archiveGroup;
-
-            foreach (var path in archiveGroup)
-            {
-                forceInclude.Add(path);
-            }
+            builder.ArchiveManifestPaths = [vpk.FileName];
+            forceInclude.Add(vpk.FileName);
         }
 
         var result = targets
@@ -104,16 +101,105 @@ internal sealed class CVpkExtractionPlanner
         return result.Count == 0 ? CVpkExtractionPlan.Empty : new CVpkExtractionPlan(result, forceInclude);
     }
 
-    private List<string> BuildArchiveGroup(string vpkManifestPath)
+    internal CVpkExtractionPlan ResolveArchives(CVpkExtractionPlan plan, string installDirectory)
     {
-        var group = new List<string> { vpkManifestPath };
+        using var _prof = CProfiler.Measure();
 
-        if (DirVpkNameRegex.IsMatch(vpkManifestPath))
+        if (plan.Targets.Count == 0)
         {
-            group.AddRange(FindCompanions(vpkManifestPath));
+            return plan;
         }
 
-        return group;
+        var forceInclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var resolvedTargets = new List<CVpkExtractionTarget>(plan.Targets.Count);
+
+        foreach (var target in plan.Targets)
+        {
+            var archivePaths = new List<string> { target.VpkManifestPath };
+
+            if (DirVpkNameRegex.IsMatch(target.VpkManifestPath))
+            {
+                archivePaths.AddRange(ResolveNeededCompanions(target, installDirectory));
+            }
+
+            forceInclude.UnionWith(archivePaths);
+            resolvedTargets.Add(target with { ArchiveManifestPaths = archivePaths });
+        }
+
+        return new CVpkExtractionPlan(resolvedTargets, forceInclude);
+    }
+
+    private IReadOnlyList<string> ResolveNeededCompanions(CVpkExtractionTarget target, string installDirectory)
+    {
+        var resolvedPath = ResolveInstallPath(installDirectory, target.VpkManifestPath);
+
+        if (!File.Exists(resolvedPath))
+        {
+            return [];
+        }
+
+        try
+        {
+            var neededIndexes = WithPak(resolvedPath, pak => CollectNeededArchiveIndexes(pak, target));
+            return ResolveCompanionPaths(target.VpkManifestPath, neededIndexes).ToList();
+        }
+        catch (Exception ex)
+        {
+            CSteamLog.Warning(CSteamLog.Depot,
+                $"Could not inspect {target.VpkManifestPath} to pick its archives ({ex.Message}); " +
+                "downloading every companion archive instead.");
+
+            return FindCompanions(target.VpkManifestPath).ToList();
+        }
+    }
+
+    private static HashSet<ushort> CollectNeededArchiveIndexes(IPakSystem pak, CVpkExtractionTarget target)
+    {
+        var indexes = new HashSet<ushort>();
+
+        foreach (var entry in pak.GetEntries())
+        {
+            if (entry.ArchiveIndex == InlineArchiveIndex)
+            {
+                continue;
+            }
+
+            if (target.ExtractAllEntries)
+            {
+                indexes.Add(entry.ArchiveIndex);
+                continue;
+            }
+
+            var extension = Path.GetExtension(entry.Path).TrimStart('.').ToLowerInvariant();
+            if (target.ExtensionFilter.Contains(extension))
+            {
+                indexes.Add(entry.ArchiveIndex);
+            }
+        }
+
+        return indexes;
+    }
+
+    private IEnumerable<string> ResolveCompanionPaths(string dirVpkManifestPath, HashSet<ushort> neededIndexes)
+    {
+        if (neededIndexes.Count == 0)
+        {
+            return [];
+        }
+
+        var normalized = Normalize(dirVpkManifestPath);
+        var slash = normalized.LastIndexOf('/');
+        var directory = slash >= 0 ? normalized[..(slash + 1)] : string.Empty;
+        var fileName = slash >= 0 ? normalized[(slash + 1)..] : normalized;
+        var group = fileName[..^DirVpkSuffix.Length];
+
+        var expected = new HashSet<string>(
+            neededIndexes.Select(index => $"{directory}{group}_{index:D3}.vpk"),
+            StringComparer.OrdinalIgnoreCase);
+
+        return _manifest.Files
+            .Where(file => !file.Flags.HasFlag(EDepotFileFlag.Directory) && expected.Contains(Normalize(file.FileName)))
+            .Select(file => file.FileName);
     }
 
     internal static async Task<IReadOnlyList<string>> WriteListings(string installDirectory, CancellationToken ct)
@@ -395,7 +481,10 @@ internal sealed class CVpkGroupTracker
 
     internal void MarkFileDone()
     {
-        Interlocked.Decrement(ref _remaining);
+        if (Interlocked.Decrement(ref _remaining) == 0)
+        {
+            StartExtraction();
+        }
     }
 
     internal Task<IReadOnlyList<string>> StartExtraction()

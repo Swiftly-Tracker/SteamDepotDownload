@@ -219,11 +219,22 @@ public class Application
         var lastPrint = DateTime.MinValue;
         var lastFraction = -1.0;
 
+        uint? stageDepotId = null;
+        var stageStart = DateTime.MinValue;
+        var stageStartBytes = 0UL;
+
         return progress =>
         {
             var now = DateTime.UtcNow;
             var stalled = now - lastPrint >= TimeSpan.FromSeconds(5);
             var advanced = progress.Fraction - lastFraction >= 0.05;
+
+            if (stageDepotId != progress.DepotId)
+            {
+                stageDepotId = progress.DepotId;
+                stageStart = now;
+                stageStartBytes = progress.BytesDownloaded;
+            }
 
             if (!stalled && !advanced && progress.Fraction < 1.0)
             {
@@ -234,9 +245,40 @@ public class Application
             lastFraction = progress.Fraction;
 
             var line = progress.CurrentFile ?? progress.Stage ?? string.Empty;
+            var eta = FormatEta(progress, now - stageStart, stageStartBytes);
+
             Console.WriteLine(
-                $"[{progress.Fraction,7:P1}] {FormatBytes(progress.BytesDownloaded)} / {FormatBytes(progress.BytesTotal)}  {line}");
+                $"[{progress.Fraction,7:P1}] {FormatBytes(progress.BytesDownloaded)} / {FormatBytes(progress.BytesTotal)}" +
+                $"{eta}  {line}");
         };
+    }
+
+    private static string FormatEta(DownloadProgress progress, TimeSpan sinceStageStart, ulong stageStartBytes)
+    {
+        if (progress.BytesTotal == 0 || progress.Fraction >= 1.0 || sinceStageStart <= TimeSpan.Zero)
+        {
+            return string.Empty;
+        }
+
+        var downloadedThisStage = progress.BytesDownloaded - stageStartBytes;
+        var bytesPerSecond = downloadedThisStage / sinceStageStart.TotalSeconds;
+
+        if (bytesPerSecond <= 0)
+        {
+            return string.Empty;
+        }
+
+        var remaining = progress.BytesTotal - progress.BytesDownloaded;
+        var etaSeconds = remaining / bytesPerSecond;
+
+        var eta = TimeSpan.FromSeconds(Math.Min(etaSeconds, TimeSpan.MaxValue.TotalSeconds));
+        var etaText = eta.TotalHours >= 1
+            ? $"{(int)eta.TotalHours}h {eta.Minutes}m"
+            : eta.TotalMinutes >= 1
+                ? $"{eta.Minutes}m {eta.Seconds}s"
+                : $"{eta.Seconds}s";
+
+        return $"  eta {etaText} ({FormatBytes((ulong)bytesPerSecond)}/s)";
     }
 
     private static string FormatBytes(ulong bytes)

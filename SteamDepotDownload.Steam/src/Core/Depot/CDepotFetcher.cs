@@ -296,10 +296,28 @@ internal sealed class CDepotFetcher : IDepotFetcher
 
         var stageWatch = Stopwatch.StartNew();
 
-        var vpkPlan = new CVpkExtractionPlanner(depot, Config, manifest).Plan();
+        var vpkPlanner = new CVpkExtractionPlanner(depot, Config, manifest);
+        var vpkPlan = vpkPlanner.Plan();
 
         CSteamLog.Detailed(CSteamLog.Depot, $"{label}: vpk plan took {stageWatch.Elapsed}.");
         stageWatch.Restart();
+
+        if (vpkPlan.Targets.Count > 0)
+        {
+            var indexOnlyConfig = Config with { FileFilter = FileFilter.FromLines(vpkPlan.ForceIncludePaths) };
+            var indexPlanner = new CFilePlanner(depot, indexOnlyConfig, manifest, previous, counter);
+            var indexQueue = new ConcurrentQueue<CPendingChunk>();
+
+            await indexPlanner.PrepareAsync(indexQueue, options, ct).ConfigureAwait(false);
+            await new CChunkPump(_session, pool, depot, counter).RunAsync(indexQueue, options, ct)
+                .ConfigureAwait(false);
+
+            vpkPlan = vpkPlanner.ResolveArchives(vpkPlan, depot.InstallDirectory);
+
+            CSteamLog.Detailed(CSteamLog.Depot,
+                $"{label}: vpk archive selection ({vpkPlan.ForceIncludePaths.Count} archives) took {stageWatch.Elapsed}.");
+            stageWatch.Restart();
+        }
 
         var effectiveConfig = vpkPlan.ForceIncludePaths.Count > 0
             ? Config with { FileFilter = Config.FileFilter!.WithForcedIncludes(depot.DepotId, vpkPlan.ForceIncludePaths) }

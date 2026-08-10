@@ -15,10 +15,8 @@ internal sealed class CChunkPump
 {
     private const int MaxAttemptsPerChunk = 5;
     private const int MaxWriteWorkers = 8;
-    private const int RampStartConcurrency = 2;
 
     private static readonly TimeSpan ChunkStallTimeout = TimeSpan.FromSeconds(45);
-    private static readonly TimeSpan RampInterval = TimeSpan.FromSeconds(1);
 
     private readonly CSteamSession _session;
     private readonly CCdnServerPool _pool;
@@ -63,11 +61,6 @@ internal sealed class CChunkPump
             .Select(_ => WriteWorkerAsync(channel.Reader, ct))
             .ToArray();
 
-        var maxConcurrency = Math.Max(1, options.MaxDegreeOfParallelism);
-        var rampGate = new SemaphoreSlim(Math.Min(RampStartConcurrency, maxConcurrency), maxConcurrency);
-        using var rampCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        var rampTask = RunRampAsync(rampGate, maxConcurrency, rampCts.Token);
-
         Exception? failure = null;
 
         try
@@ -75,22 +68,12 @@ internal sealed class CChunkPump
             try
             {
                 await Parallel.ForEachAsync(queue, options, async (pending, token) =>
-                {
-                    await rampGate.WaitAsync(token).ConfigureAwait(false);
-                    try
-                    {
-                        await DownloadChunkAsync(pending, channel.Writer, token).ConfigureAwait(false);
-                    }
-                    finally
-                    {
-                        rampGate.Release();
-                    }
-                }).ConfigureAwait(false);
+                    await DownloadChunkAsync(pending, channel.Writer, token).ConfigureAwait(false))
+                    .ConfigureAwait(false);
             }
             finally
             {
                 channel.Writer.TryComplete();
-                rampCts.Cancel();
             }
 
             await Task.WhenAll(writers).ConfigureAwait(false);
@@ -101,9 +84,6 @@ internal sealed class CChunkPump
         }
         finally
         {
-            await rampTask.ConfigureAwait(false);
-            rampGate.Dispose();
-
             foreach (var stream in queue.Select(pending => pending.Stream).Distinct())
             {
                 stream.CloseNow();
@@ -116,30 +96,6 @@ internal sealed class CChunkPump
         }
 
         LogServerStats();
-    }
-
-    private static async Task RunRampAsync(SemaphoreSlim gate, int maxConcurrency, CancellationToken ct)
-    {
-        var released = Math.Min(RampStartConcurrency, maxConcurrency);
-        if (released >= maxConcurrency)
-        {
-            return;
-        }
-
-        using var timer = new PeriodicTimer(RampInterval);
-
-        try
-        {
-            while (released < maxConcurrency && await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
-            {
-                var next = Math.Min(maxConcurrency, released * 2);
-                gate.Release(next - released);
-                released = next;
-            }
-        }
-        catch (OperationCanceledException)
-        {
-        }
     }
 
     private async Task WriteWorkerAsync(ChannelReader<CWriteWork> reader, CancellationToken ct)

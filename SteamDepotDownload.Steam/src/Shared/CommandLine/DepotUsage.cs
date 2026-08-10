@@ -39,7 +39,7 @@ public static class DepotUsage
           -validate              checksum files that are already present (alias: -verify-all)
           -manifest-only         write a readable manifest instead of downloading
           -cellid <#>            override the content-server cell
-          -max-downloads <#>     chunks to fetch at once (default: 8)
+          -max-downloads <#>     chunks to fetch at once (default: 32)
           -use-lancache          route downloads through a Lancache on this network
           -os <os>               windows, macos or linux (default: this host)
           -osarch <arch>         32 or 64 (default: this host)

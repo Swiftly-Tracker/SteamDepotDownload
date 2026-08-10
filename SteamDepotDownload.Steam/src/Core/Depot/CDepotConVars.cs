@@ -35,7 +35,7 @@ internal static class CDepotConVars
         _dir ??= new ConVar<string>("depot_dir", string.Empty,
             "Where downloads are written. Empty uses depots/<depot>/<build> under the working directory.");
 
-        _maxDownloads ??= new ConVar<int>("depot_max_downloads", 8,
+        _maxDownloads ??= new ConVar<int>("depot_max_downloads", 32,
             "How many chunks to fetch at once. Higher saturates fast links; lower is kinder to slow ones.",
             ConVarFlags.None, (1, 64));
 
@@ -109,7 +109,7 @@ internal static class CDepotConVars
     internal static DepotArgsDefaults ToDefaults() => new()
     {
         InstallDirectory = Empty(_dir?.Value),
-        MaxDownloads = _maxDownloads?.Value ?? 8,
+        MaxDownloads = _maxDownloads?.Value ?? 32,
         CellId = (uint)Math.Max(0, _cellId?.Value ?? 0),
         Branch = Empty(_branch?.Value) ?? DepotConstants.PublicBranch,
         BranchPassword = Empty(_branchPassword?.Value),
