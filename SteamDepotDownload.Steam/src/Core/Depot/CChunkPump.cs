@@ -2,6 +2,8 @@ using System.Buffers;
 using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Net;
+using System.Runtime.ExceptionServices;
+using System.Threading.Channels;
 using SteamDepotDownload.Steam.Core.Diagnostics;
 using SteamDepotDownload.Steam.Core.Session;
 using SteamDepotDownload.Steam.Shared.Depot;
@@ -12,8 +14,11 @@ namespace SteamDepotDownload.Steam.Core.Depot;
 internal sealed class CChunkPump
 {
     private const int MaxAttemptsPerChunk = 5;
+    private const int MaxWriteWorkers = 8;
+    private const int RampStartConcurrency = 2;
 
     private static readonly TimeSpan ChunkStallTimeout = TimeSpan.FromSeconds(45);
+    private static readonly TimeSpan RampInterval = TimeSpan.FromSeconds(1);
 
     private readonly CSteamSession _session;
     private readonly CCdnServerPool _pool;
@@ -44,37 +49,123 @@ internal sealed class CChunkPump
 
         _counter.Report(stage: "downloading");
 
+        var writeWorkerCount = Math.Clamp(Environment.ProcessorCount, 2, MaxWriteWorkers);
+
+        var channel = Channel.CreateBounded<CWriteWork>(new BoundedChannelOptions(
+            Math.Max(2, options.MaxDegreeOfParallelism))
+        {
+            SingleWriter = false,
+            SingleReader = false,
+            FullMode = BoundedChannelFullMode.Wait,
+        });
+
+        var writers = Enumerable.Range(0, writeWorkerCount)
+            .Select(_ => WriteWorkerAsync(channel.Reader, ct))
+            .ToArray();
+
+        var maxConcurrency = Math.Max(1, options.MaxDegreeOfParallelism);
+        var rampGate = new SemaphoreSlim(Math.Min(RampStartConcurrency, maxConcurrency), maxConcurrency);
+        using var rampCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var rampTask = RunRampAsync(rampGate, maxConcurrency, rampCts.Token);
+
+        Exception? failure = null;
+
         try
         {
-            await Parallel.ForEachAsync(queue, options, async (pending, token) =>
+            try
             {
-                var succeeded = false;
-
-                try
+                await Parallel.ForEachAsync(queue, options, async (pending, token) =>
                 {
-                    await DownloadChunkAsync(pending, token).ConfigureAwait(false);
-                    succeeded = true;
-                }
-                finally
-                {
-                    var fileDone = pending.Stream.ChunkFinished();
-                    if (fileDone && succeeded)
+                    await rampGate.WaitAsync(token).ConfigureAwait(false);
+                    try
                     {
-                        _counter.FileCompleted("Downloaded", pending.File.FileName, pending.File.TotalSize,
-                            pending.Stream.Elapsed);
+                        await DownloadChunkAsync(pending, channel.Writer, token).ConfigureAwait(false);
                     }
-                }
-            }).ConfigureAwait(false);
+                    finally
+                    {
+                        rampGate.Release();
+                    }
+                }).ConfigureAwait(false);
+            }
+            finally
+            {
+                channel.Writer.TryComplete();
+                rampCts.Cancel();
+            }
+
+            await Task.WhenAll(writers).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            failure = ex;
         }
         finally
         {
+            await rampTask.ConfigureAwait(false);
+            rampGate.Dispose();
+
             foreach (var stream in queue.Select(pending => pending.Stream).Distinct())
             {
                 stream.CloseNow();
             }
         }
 
+        if (failure != null)
+        {
+            ExceptionDispatchInfo.Capture(failure).Throw();
+        }
+
         LogServerStats();
+    }
+
+    private static async Task RunRampAsync(SemaphoreSlim gate, int maxConcurrency, CancellationToken ct)
+    {
+        var released = Math.Min(RampStartConcurrency, maxConcurrency);
+        if (released >= maxConcurrency)
+        {
+            return;
+        }
+
+        using var timer = new PeriodicTimer(RampInterval);
+
+        try
+        {
+            while (released < maxConcurrency && await timer.WaitForNextTickAsync(ct).ConfigureAwait(false))
+            {
+                var next = Math.Min(maxConcurrency, released * 2);
+                gate.Release(next - released);
+                released = next;
+            }
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private async Task WriteWorkerAsync(ChannelReader<CWriteWork> reader, CancellationToken ct)
+    {
+        await foreach (var work in reader.ReadAllAsync(CancellationToken.None).ConfigureAwait(false))
+        {
+            try
+            {
+                using var writeToDiskProf = CProfiler.Measure("WriteChunkToDiskAsync");
+
+                await work.Pending.Stream
+                    .WriteAsync((long)work.Pending.Chunk.Offset, work.Buffer.AsMemory(0, work.Length), ct)
+                    .ConfigureAwait(false);
+            }
+            finally
+            {
+                _arrayPool.Return(work.Buffer);
+            }
+
+            var fileDone = work.Pending.Stream.ChunkFinished();
+            if (fileDone)
+            {
+                _counter.FileCompleted("Downloaded", work.Pending.File.FileName, work.Pending.File.TotalSize,
+                    work.Pending.Stream.Elapsed);
+            }
+        }
     }
 
     private void LogServerStats()
@@ -91,12 +182,14 @@ internal sealed class CChunkPump
 
     private static readonly ArrayPool<byte> _arrayPool = ArrayPool<byte>.Shared;
 
-    private async Task DownloadChunkAsync(CPendingChunk pending, CancellationToken ct)
+    private async Task DownloadChunkAsync(CPendingChunk pending, ChannelWriter<CWriteWork> writer,
+        CancellationToken ct)
     {
         using var _prof = CProfiler.Measure();
 
         var chunk = pending.Chunk;
         var buffer = _arrayPool.Rent((int)chunk.UncompressedLength);
+        var handedOff = false;
 
         try
         {
@@ -132,13 +225,8 @@ internal sealed class CChunkPump
 
                     RecordSuccess(server.Host, written, watch.ElapsedMilliseconds);
 
-                    var writeToDiskProf = CProfiler.Measure("WriteChunkToDiskAsync");
-
-                    await pending.Stream
-                        .WriteAsync((long)chunk.Offset, buffer.AsMemory(0, written), ct)
-                        .ConfigureAwait(false);
-
-                    writeToDiskProf.Dispose();
+                    await writer.WriteAsync(new CWriteWork(pending, buffer, written), ct).ConfigureAwait(false);
+                    handedOff = true;
 
                     _counter.AddDownloaded(chunk.UncompressedLength, pending.File.FileName);
                     return;
@@ -176,7 +264,10 @@ internal sealed class CChunkPump
         }
         finally
         {
-            _arrayPool.Return(buffer);
+            if (!handedOff)
+            {
+                _arrayPool.Return(buffer);
+            }
         }
     }
 
@@ -201,4 +292,6 @@ internal sealed class CChunkPump
         internal int Chunks;
         internal int Retries;
     }
+
+    private readonly record struct CWriteWork(CPendingChunk Pending, byte[] Buffer, int Length);
 }
