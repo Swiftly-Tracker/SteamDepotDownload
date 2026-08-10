@@ -57,7 +57,7 @@ internal sealed class CSteamSession : ISteamSession
         var configuration = SteamConfiguration.Create(builder =>
         {
             builder.WithConnectionTimeout(options.ConnectionTimeout);
-            builder.WithHttpClientFactory(_ => CHttpFactory.Create());
+            builder.WithHttpClientFactory(_ => CHttpFactory.Create(Timeout.InfiniteTimeSpan));
 
             if (options.CellIdOverride is { } cellId)
             {
@@ -101,6 +101,8 @@ internal sealed class CSteamSession : ISteamSession
 
     internal async Task ConnectAsync(CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         await _connectGate.WaitAsync(ct).ConfigureAwait(false);
 
         try
@@ -453,6 +455,8 @@ internal sealed class CSteamSession : ISteamSession
 
     internal async Task<byte[]?> GetDepotKeyAsync(uint depotId, uint appId, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         if (_depotKeys.TryGetValue(depotId, out var cached))
         {
             return cached;
@@ -483,6 +487,8 @@ internal sealed class CSteamSession : ISteamSession
     internal async Task<ulong> GetManifestRequestCodeAsync(uint depotId, uint appId, ulong manifestId,
         string branch, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         var passwordHash = GetBranchPasswordHash(branch);
@@ -495,6 +501,8 @@ internal sealed class CSteamSession : ISteamSession
 
     internal async Task<string?> GetCdnAuthTokenAsync(uint appId, uint depotId, string host, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         if (_cdnAuthTokens.TryGetValue((depotId, host), out var cached))
         {
             return cached;
@@ -516,6 +524,8 @@ internal sealed class CSteamSession : ISteamSession
 
     internal async Task<PublishedFileDetails?> GetPublishedFileDetailsAsync(ulong publishedFileId, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         var service = _unifiedMessages.CreateService<PublishedFile>();
@@ -536,12 +546,16 @@ internal sealed class CSteamSession : ISteamSession
 
     internal async Task<SteamCloud.UGCDetailsCallback> GetUgcDetailsAsync(ulong ugcId, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
         return await _cloud.RequestUGCDetails(ugcId).ToTask().WaitAsync(ct).ConfigureAwait(false);
     }
 
     internal async Task<IReadOnlyCollection<Server>> GetContentServersAsync(uint? cellId, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         return await _content.GetServersForSteamPipe(cellId ?? CellId).WaitAsync(ct).ConfigureAwait(false);
@@ -629,6 +643,8 @@ internal sealed class CSteamSession : ISteamSession
 
     private async Task ConnectOnceAsync(CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         _connected = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _loggedOn = new TaskCompletionSource<SteamUser.LoggedOnCallback>(TaskCreationOptions.RunContinuationsAsynchronously);
         _licenses = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -644,6 +660,8 @@ internal sealed class CSteamSession : ISteamSession
 
     private async Task LogOnAsync(CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         if (_credentials.IsAnonymous)
         {
             _user.LogOnAnonymous(new SteamUser.AnonymousLogOnDetails
@@ -711,7 +729,7 @@ internal sealed class CSteamSession : ISteamSession
             throw;
         }
 
-        CSteamLog.Msg(CSteamLog.Steam, $"Logged on as {AccountName}.");
+        CSteamLog.Msg(CSteamLog.Steam, $"Logged on as {AccountName} (cell {CellId}).");
     }
 
     private async Task<AuthPollResult> BeginAuthSessionAsync(CancellationToken ct)

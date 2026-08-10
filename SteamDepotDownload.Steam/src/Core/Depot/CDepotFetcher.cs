@@ -27,6 +27,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     public async Task<DownloadResult> DownloadAppAsync(AppDownloadRequest request,
         IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
     {
+        using var _prof = CProfiler.Measure();
+
         await _session.EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         var depots = await _resolver.ResolveAsync(request, ct).ConfigureAwait(false);
@@ -44,6 +46,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     public async Task<DownloadResult> DownloadPubfileAsync(ulong publishedFileId,
         IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
     {
+        using var _prof = CProfiler.Measure();
+
         await _session.EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         var details = await _session.GetPublishedFileDetailsAsync(publishedFileId, ct).ConfigureAwait(false);
@@ -61,6 +65,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     public async Task<DownloadResult> DownloadUgcAsync(uint appId, ulong ugcId,
         IProgress<DownloadProgress>? progress = null, CancellationToken ct = default)
     {
+        using var _prof = CProfiler.Measure();
+
         await _session.EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         var details = await _session.GetUgcDetailsAsync(ugcId, ct).ConfigureAwait(false);
@@ -73,6 +79,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     private async Task<DownloadResult> DownloadUgcContentAsync(uint appId, ulong contentId,
         string? fileUrl, string? fileName, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         if (!string.IsNullOrEmpty(fileUrl))
         {
             return await DownloadWebFileAsync(appId, contentId, fileName, fileUrl, ct).ConfigureAwait(false);
@@ -113,11 +121,15 @@ internal sealed class CDepotFetcher : IDepotFetcher
     private async Task<DownloadResult> DownloadWebFileAsync(uint appId, ulong contentId, string? fileName,
         string url, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var directory = _resolver.CreateDirectories(appId, 0);
         var name = string.IsNullOrEmpty(fileName) ? contentId.ToString() : Path.GetFileName(fileName);
         var path = Path.Combine(directory, name);
 
-        using var http = CHttpFactory.Create();
+        // Workshop items can run several hundred MB; a fixed wall-clock timeout would kill a
+        // legitimate slow-connection download. Cancellation is via `ct` (wired to Ctrl+C), not a timer.
+        using var http = CHttpFactory.Create(Timeout.InfiniteTimeSpan);
         using var response = await http.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, ct)
             .ConfigureAwait(false);
         response.EnsureSuccessStatusCode();
@@ -152,6 +164,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     public async Task<string> DumpManifestAsync(uint appId, uint depotId, ulong manifestId, string branch,
         CancellationToken ct = default)
     {
+        using var _prof = CProfiler.Measure();
+
         await _session.EnsureConnectedAsync(ct).ConfigureAwait(false);
 
         var request = new AppDownloadRequest
@@ -175,6 +189,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     private async Task<DownloadResult> DownloadDepotsAsync(uint appId, List<CResolvedDepot> depots,
         IProgress<DownloadProgress>? progress, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var stopwatch = Stopwatch.StartNew();
         var summaries = new List<DepotDownloadSummary>(depots.Count);
 
@@ -218,6 +234,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     private async Task<DepotDownloadSummary> DownloadDepotAsync(CCdnServerPool pool, CResolvedDepot depot,
         IProgress<DownloadProgress>? progress, HashSet<string> expectedFiles, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var manifest = await AcquireManifestAsync(pool, depot, ct).ConfigureAwait(false);
 
         if (Config.ManifestOnly)
@@ -276,8 +294,12 @@ internal sealed class CDepotFetcher : IDepotFetcher
             CancellationToken = ct,
         };
 
-        var vpkPlan = await new CVpkExtractionPlanner(_session, pool, depot, Config, manifest, previous)
-            .PlanAsync(options, ct).ConfigureAwait(false);
+        var stageWatch = Stopwatch.StartNew();
+
+        var vpkPlan = new CVpkExtractionPlanner(depot, Config, manifest).Plan();
+
+        CSteamLog.Detailed(CSteamLog.Depot, $"{label}: vpk plan took {stageWatch.Elapsed}.");
+        stageWatch.Restart();
 
         var effectiveConfig = vpkPlan.ForceIncludePaths.Count > 0
             ? Config with { FileFilter = Config.FileFilter!.WithForcedIncludes(depot.DepotId, vpkPlan.ForceIncludePaths) }
@@ -295,13 +317,19 @@ internal sealed class CDepotFetcher : IDepotFetcher
             expectedFiles.Add(path);
         }
 
+        CSteamLog.Detailed(CSteamLog.Depot,
+            $"{label}: file prep (verify/allocate {planner.ExpectedFiles.Count()} files) took {stageWatch.Elapsed}.");
+        stageWatch.Restart();
+
         var pump = new CChunkPump(_session, pool, depot, counter);
         await pump.RunAsync(queue, options, ct).ConfigureAwait(false);
 
+        CSteamLog.Detailed(CSteamLog.Depot,
+            $"{label}: chunk download ({FormatBytes(counter.BytesDownloaded)}) took {stageWatch.Elapsed}.");
+        stageWatch.Restart();
+
         var extractionTasks = vpkGroupTrackers.Values.Distinct()
-            .Select(tracker => tracker.ExtractionTask)
-            .Where(extractionTask => extractionTask != null)
-            .Select(extractionTask => extractionTask!)
+            .Select(tracker => tracker.StartExtraction())
             .ToList();
 
         var extractionResults = await Task.WhenAll(extractionTasks).ConfigureAwait(false);
@@ -313,6 +341,9 @@ internal sealed class CDepotFetcher : IDepotFetcher
                 expectedFiles.Add(path);
             }
         }
+
+        CSteamLog.Detailed(CSteamLog.Depot,
+            $"{label}: vpk extraction ({extractionTasks.Count} archives) took {stageWatch.Elapsed}.");
 
         ApplyExecutableFlags(depot, manifest);
 
@@ -354,6 +385,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
     private async Task<CManifestData> AcquireManifestAsync(CCdnServerPool pool, CResolvedDepot depot,
         CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var cache = new CManifestCache(_session, depot.ManifestDirectory);
 
         var manifest = cache.TryLoad(depot.DepotId, depot.ManifestId, out var unusable);
@@ -429,6 +462,8 @@ internal sealed class CDepotFetcher : IDepotFetcher
 
     private static void RemoveUnusedFiles(string installDirectory, HashSet<string> expectedFiles)
     {
+        using var _prof = CProfiler.Measure();
+
         var configDirectory = Path.GetFullPath(
             Path.Combine(installDirectory, DepotConstants.ConfigDirectory)) + Path.DirectorySeparatorChar;
 

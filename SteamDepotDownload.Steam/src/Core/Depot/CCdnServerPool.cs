@@ -41,6 +41,8 @@ internal sealed class CCdnServerPool : IDisposable
 
     internal async Task RefreshAsync(uint? cellId, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var servers = await _session.GetContentServersAsync(cellId, ct).ConfigureAwait(false);
 
         var proxy = servers.FirstOrDefault(server => server.UseAsProxy);
@@ -80,6 +82,8 @@ internal sealed class CCdnServerPool : IDisposable
 
     internal Server GetConnection()
     {
+        using var _prof = CProfiler.Measure();
+
         lock (_lock)
         {
             if (_servers.Count == 0)
@@ -87,17 +91,14 @@ internal sealed class CCdnServerPool : IDisposable
                 throw new DepotDownloadException("The content server pool is empty.");
             }
 
-            return _servers[(int)((uint)_next % (uint)_servers.Count)];
+            var server = _servers[(int)((uint)_next % (uint)_servers.Count)];
+            _next++;
+            return server;
         }
     }
 
     internal void ReturnBrokenConnection(Server? server)
     {
-        lock (_lock)
-        {
-            _next++;
-        }
-
         if (server?.Host is { } host)
         {
             _store.SetContentServerPenalty(host, _store.GetContentServerPenalty(host) + 1);

@@ -9,7 +9,7 @@ internal static class CHttpFactory
     private static readonly string UserAgent =
         $"SteamDepotDownload/{Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0"}";
 
-    internal static HttpClient Create()
+    internal static HttpClient Create(TimeSpan? timeout = null)
     {
         var handler = new SocketsHttpHandler
         {
@@ -18,6 +18,12 @@ internal static class CHttpFactory
 
         var client = new HttpClient(handler);
         client.DefaultRequestHeaders.UserAgent.ParseAdd(UserAgent);
+
+        if (timeout is { } value)
+        {
+            client.Timeout = value;
+        }
+
         return client;
     }
 

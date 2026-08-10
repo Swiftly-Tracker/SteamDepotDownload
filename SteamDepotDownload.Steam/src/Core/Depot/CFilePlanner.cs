@@ -41,6 +41,8 @@ internal sealed class CFilePlanner
     internal async Task PrepareAsync(ConcurrentQueue<CPendingChunk> queue, ParallelOptions options,
         CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var files = _manifest.Files
             .Where(file => _config.FileFilter?.IsIncluded(_depot.DepotId, file.FileName) ?? true)
             .ToList();
@@ -61,16 +63,25 @@ internal sealed class CFilePlanner
 
         _counter.Report(stage: "checking files");
 
+        var collected = new ConcurrentBag<CPendingChunk>();
+
         await Parallel.ForEachAsync(regularFiles, options, async (file, token) =>
         {
             await Task.Yield();
-            PrepareFile(file, queue, token);
+            PrepareFile(file, collected, token);
         }).ConfigureAwait(false);
+
+        foreach (var pending in collected.OrderBy(pending => pending.Chunk.UncompressedLength))
+        {
+            queue.Enqueue(pending);
+        }
     }
 
-    private void PrepareFile(DepotManifest.FileData file, ConcurrentQueue<CPendingChunk> queue,
+    private void PrepareFile(DepotManifest.FileData file, ConcurrentBag<CPendingChunk> collected,
         CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         ct.ThrowIfCancellationRequested();
 
         var finalPath = ResolvePath(file.FileName);
@@ -110,7 +121,7 @@ internal sealed class CFilePlanner
 
         foreach (var chunk in needed)
         {
-            queue.Enqueue(new CPendingChunk(stream, file, chunk));
+            collected.Add(new CPendingChunk(stream, file, chunk));
         }
 
         _counter.FileDownloaded();
@@ -118,6 +129,8 @@ internal sealed class CFilePlanner
 
     private List<DepotManifest.ChunkData> PlanChunks(DepotManifest.FileData file, string finalPath)
     {
+        using var _prof = CProfiler.Measure();
+
         var info = new FileInfo(finalPath);
 
         if (!info.Exists)
@@ -145,6 +158,8 @@ internal sealed class CFilePlanner
     private List<DepotManifest.ChunkData> Patch(DepotManifest.FileData file,
         DepotManifest.FileData previousFile, string finalPath)
     {
+        using var _prof = CProfiler.Measure();
+
         var oldChunks = previousFile.Chunks
             .GroupBy(chunk => chunk.ChunkID!, ChunkIdComparer.Instance)
             .ToDictionary(group => group.Key, group => group.First(), ChunkIdComparer.Instance);
@@ -220,6 +235,8 @@ internal sealed class CFilePlanner
 
     private List<DepotManifest.ChunkData> Validate(DepotManifest.FileData file, string finalPath, FileInfo info)
     {
+        using var _prof = CProfiler.Measure();
+
         var needed = new List<DepotManifest.ChunkData>();
 
         try
@@ -270,6 +287,8 @@ internal sealed class CFilePlanner
 
     private static void Allocate(string path, ulong size)
     {
+        using var _prof = CProfiler.Measure();
+
         using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
         stream.SetLength((long)size);
     }

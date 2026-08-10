@@ -133,8 +133,6 @@ Use literal paths for exact files (matched case-insensitively), `regex:` for pat
 
 `vpk:` takes an optional comma-separated extension allow-list (no dots): `vpk:txt,lua,kv3,...` keeps only entries with those extensions and skips the rest. A bare `vpk:` with no list extracts everything. Depots without a `vpk:` rule leave their VPKs packed, even if `_dir.vpk` still downloads.
 
-Plain literal/`regex:` rules get a second life too: if a rule never matches a real top-level file in the depot, it's tried against the _inner_ paths of every `_dir.vpk` the depot has. A rule like `materials/models/foo.vmt` above reaches into whichever VPK actually contains that asset and pulls just that one file out - without downloading the depot's other VPKs, and without downloading a VPK's numbered companions at all unless something inside it actually matched. This works because a `_dir.vpk` carries the full entry list up front; only that small file needs fetching to know whether the rest is worth pulling. (This inner-path search only works for split `_dir.vpk` archives, not single-file VPKs, since a single-file VPK has no lightweight metadata-only file to peek at.)
-
 ## Interactive terminal
 
 Run with no target to get a REPL:

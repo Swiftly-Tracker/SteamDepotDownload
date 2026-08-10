@@ -25,6 +25,8 @@ internal sealed class CManifestCache
 
     internal CManifestData? TryLoad(uint depotId, ulong manifestId, out bool unusable)
     {
+        using var _prof = CProfiler.Measure();
+
         unusable = false;
 
         var path = ManifestPath(depotId, manifestId);
@@ -57,6 +59,8 @@ internal sealed class CManifestCache
 
     internal void Save(CManifestData manifest)
     {
+        using var _prof = CProfiler.Measure();
+
         Directory.CreateDirectory(_manifestDirectory);
 
         var path = ManifestPath(manifest.DepotId, manifest.ManifestGid);
@@ -72,6 +76,8 @@ internal sealed class CManifestCache
 
     internal void Prune(uint depotId, IReadOnlyCollection<ulong> keep)
     {
+        using var _prof = CProfiler.Measure();
+
         var wanted = keep
             .Select(manifestId => Path.GetFileName(ManifestPath(depotId, manifestId)))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
@@ -110,6 +116,8 @@ internal sealed class CManifestCache
     internal async Task<DepotManifest> DownloadAsync(CCdnServerPool pool, uint appId, uint depotId,
         ulong manifestId, string branch, byte[]? depotKey, CancellationToken ct)
     {
+        using var _prof = CProfiler.Measure();
+
         var requestCode = 0UL;
         var requestCodeExpiry = DateTime.MinValue;
 

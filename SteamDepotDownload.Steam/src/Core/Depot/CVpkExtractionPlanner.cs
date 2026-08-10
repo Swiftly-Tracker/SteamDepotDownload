@@ -1,7 +1,6 @@
 using System.Collections.Concurrent;
 using System.Text.RegularExpressions;
 using SteamDepotDownload.Steam.Core.Diagnostics;
-using SteamDepotDownload.Steam.Core.Session;
 using SteamDepotDownload.Steam.Shared.Depot;
 using SteamKit2;
 using VPKTools.Pak.Shared;
@@ -13,7 +12,6 @@ internal sealed record CVpkExtractionTarget(
     string VpkManifestPath,
     bool ExtractAllEntries,
     IReadOnlySet<string> ExtensionFilter,
-    IReadOnlyList<string> SpecificEntries,
     bool FromVpkRule,
     IReadOnlyList<string> ArchiveManifestPaths);
 
@@ -28,31 +26,28 @@ internal sealed class CVpkExtractionPlanner
     private static readonly Regex DirVpkNameRegex = new(@"_dir\.vpk$", RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string DirVpkSuffix = "_dir.vpk";
 
-    private static readonly object PakLock = new();
-    private static IPakSystem? _pak;
+    private static readonly ConcurrentBag<IPakSystem> PakPool = [];
+    private static readonly SemaphoreSlim PakPoolGate = new(Environment.ProcessorCount, Environment.ProcessorCount);
+    private static readonly Lock ModuleLoadLock = new();
+    private static bool _modulesLoaded;
 
-    private readonly CSteamSession _session;
-    private readonly CCdnServerPool _pool;
     private readonly CResolvedDepot _depot;
     private readonly DownloadConfig _config;
     private readonly CManifestData _manifest;
-    private readonly CManifestData? _previous;
 
-    internal CVpkExtractionPlanner(CSteamSession session, CCdnServerPool pool, CResolvedDepot depot,
-        DownloadConfig config, CManifestData manifest, CManifestData? previous)
+    internal CVpkExtractionPlanner(CResolvedDepot depot, DownloadConfig config, CManifestData manifest)
     {
-        _session = session;
-        _pool = pool;
         _depot = depot;
         _config = config;
         _manifest = manifest;
-        _previous = previous;
     }
 
-    internal async Task<CVpkExtractionPlan> PlanAsync(ParallelOptions options, CancellationToken ct)
+    internal CVpkExtractionPlan Plan()
     {
+        using var _prof = CProfiler.Measure();
+
         var depotFilter = _config.FileFilter?.ForDepot(_depot.DepotId);
-        if (depotFilter == null)
+        if (depotFilter == null || !depotFilter.HasVpkRule)
         {
             return CVpkExtractionPlan.Empty;
         }
@@ -66,140 +61,42 @@ internal sealed class CVpkExtractionPlanner
             return CVpkExtractionPlan.Empty;
         }
 
-        var wantsExtraction = depotFilter.HasVpkRule;
         var extensionFilter = new HashSet<string>(depotFilter.VpkExtensions, StringComparer.OrdinalIgnoreCase);
-
-        var dirVpks = vpkFiles.Where(file => DirVpkNameRegex.IsMatch(file.FileName)).ToList();
-
-        var orphanLiterals = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        List<Regex> orphanPatterns = [];
-
-        if (dirVpks.Count > 0 && (depotFilter.Literals.Count > 0 || depotFilter.Patterns.Count > 0))
-        {
-            var allNames = new HashSet<string>(
-                _manifest.Files
-                    .Where(file => !file.Flags.HasFlag(EDepotFileFlag.Directory))
-                    .Select(file => Normalize(file.FileName)),
-                StringComparer.OrdinalIgnoreCase);
-
-            foreach (var literal in depotFilter.Literals)
-            {
-                if (!allNames.Contains(literal))
-                {
-                    orphanLiterals.Add(literal);
-                }
-            }
-
-            foreach (var pattern in depotFilter.Patterns)
-            {
-                if (!allNames.Any(pattern.IsMatch))
-                {
-                    orphanPatterns.Add(pattern);
-                }
-            }
-        }
-
-        if (!wantsExtraction && orphanLiterals.Count == 0 && orphanPatterns.Count == 0)
-        {
-            return CVpkExtractionPlan.Empty;
-        }
 
         var forceInclude = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var targets = new Dictionary<string, TargetBuilder>(StringComparer.OrdinalIgnoreCase);
 
-        TargetBuilder GetOrAddTarget(string path)
+        foreach (var vpk in vpkFiles)
         {
-            if (!targets.TryGetValue(path, out var builder))
+            if (!depotFilter.IsIncluded(vpk.FileName))
             {
-                builder = new TargetBuilder();
-                targets[path] = builder;
+                continue;
             }
 
-            return builder;
-        }
+            var builder = new TargetBuilder { FromVpkRule = true };
+            targets[vpk.FileName] = builder;
 
-        if (orphanLiterals.Count > 0 || orphanPatterns.Count > 0)
-        {
-            await DownloadFilesAsync(dirVpks.Select(file => file.FileName), options, ct).ConfigureAwait(false);
-
-            foreach (var dirVpk in dirVpks)
+            if (extensionFilter.Count == 0)
             {
-                ct.ThrowIfCancellationRequested();
-
-                var resolvedPath = ResolveInstallPath(_depot.InstallDirectory, dirVpk.FileName);
-
-                IReadOnlyList<PakEntryInfo> entries;
-                try
-                {
-                    entries = WithPak(resolvedPath, pak => pak.GetEntries());
-                }
-                catch (Exception ex)
-                {
-                    CSteamLog.Warning(CSteamLog.Depot, $"Could not inspect {dirVpk.FileName}: {ex.Message}");
-                    continue;
-                }
-
-                var matched = entries
-                    .Where(entry =>
-                    {
-                        var normalized = Normalize(entry.Path);
-                        return orphanLiterals.Contains(normalized) || orphanPatterns.Any(pattern => pattern.IsMatch(normalized));
-                    })
-                    .Select(entry => entry.Path)
-                    .ToList();
-
-                if (matched.Count == 0)
-                {
-                    continue;
-                }
-
-                var archiveGroup = BuildArchiveGroup(dirVpk.FileName);
-                var builder = GetOrAddTarget(dirVpk.FileName);
-                builder.SpecificEntries.AddRange(matched);
-                builder.ArchiveManifestPaths = archiveGroup;
-
-                foreach (var path in archiveGroup)
-                {
-                    forceInclude.Add(path);
-                }
+                builder.ExtractAllEntries = true;
             }
-        }
-
-        if (wantsExtraction)
-        {
-            foreach (var vpk in vpkFiles)
+            else
             {
-                if (!depotFilter.IsIncluded(vpk.FileName))
-                {
-                    continue;
-                }
+                builder.ExtensionFilter.UnionWith(extensionFilter);
+            }
 
-                var builder = GetOrAddTarget(vpk.FileName);
-                builder.FromVpkRule = true;
+            var archiveGroup = BuildArchiveGroup(vpk.FileName);
+            builder.ArchiveManifestPaths = archiveGroup;
 
-                if (extensionFilter.Count == 0)
-                {
-                    builder.ExtractAllEntries = true;
-                }
-                else
-                {
-                    builder.ExtensionFilter.UnionWith(extensionFilter);
-                }
-
-                var archiveGroup = BuildArchiveGroup(vpk.FileName);
-                builder.ArchiveManifestPaths = archiveGroup;
-
-                foreach (var path in archiveGroup)
-                {
-                    forceInclude.Add(path);
-                }
+            foreach (var path in archiveGroup)
+            {
+                forceInclude.Add(path);
             }
         }
 
         var result = targets
             .Select(pair => new CVpkExtractionTarget(pair.Key, pair.Value.ExtractAllEntries,
-                pair.Value.ExtensionFilter, pair.Value.SpecificEntries, pair.Value.FromVpkRule,
-                pair.Value.ArchiveManifestPaths))
+                pair.Value.ExtensionFilter, pair.Value.FromVpkRule, pair.Value.ArchiveManifestPaths))
             .ToList();
 
         return result.Count == 0 ? CVpkExtractionPlan.Empty : new CVpkExtractionPlan(result, forceInclude);
@@ -251,29 +148,10 @@ internal sealed class CVpkExtractionPlanner
             .Select(file => file.FileName);
     }
 
-    private async Task DownloadFilesAsync(IEnumerable<string> manifestPaths, ParallelOptions options, CancellationToken ct)
-    {
-        var miniFilter = FileFilter.FromLines(manifestPaths);
-        if (miniFilter.IsEmpty)
-        {
-            return;
-        }
-
-        var miniConfig = _config with { FileFilter = miniFilter };
-        var miniCounter = new CDownloadCounter(_depot.DepotId, $"depot {_depot.DepotId} vpk metadata",
-            progress: null, task: null);
-
-        var miniPlanner = new CFilePlanner(_depot, miniConfig, _manifest, _previous, miniCounter);
-        var queue = new ConcurrentQueue<CPendingChunk>();
-
-        await miniPlanner.PrepareAsync(queue, options, ct).ConfigureAwait(false);
-
-        var miniPump = new CChunkPump(_session, _pool, _depot, miniCounter);
-        await miniPump.RunAsync(queue, options, ct).ConfigureAwait(false);
-    }
-
     internal static IReadOnlyList<string> ExtractTarget(CVpkExtractionTarget target, string installDirectory)
     {
+        using var _prof = CProfiler.Measure();
+
         var resolvedPath = ResolveInstallPath(installDirectory, target.VpkManifestPath);
 
         if (!File.Exists(resolvedPath))
@@ -340,28 +218,13 @@ internal sealed class CVpkExtractionPlanner
             return written;
         }
 
-        var done = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-        if (target.ExtensionFilter.Count > 0)
+        foreach (var entry in pak.GetEntries())
         {
-            foreach (var entry in pak.GetEntries())
+            var extension = Path.GetExtension(entry.Path).TrimStart('.').ToLowerInvariant();
+            if (target.ExtensionFilter.Contains(extension))
             {
-                var extension = Path.GetExtension(entry.Path).TrimStart('.').ToLowerInvariant();
-                if (target.ExtensionFilter.Contains(extension) && done.Add(entry.Path))
-                {
-                    written.Add(ExtractOne(pak, entry.Path, destinationDirectory));
-                }
+                written.Add(ExtractOne(pak, entry.Path, destinationDirectory));
             }
-        }
-
-        foreach (var entryPath in target.SpecificEntries)
-        {
-            if (!done.Add(entryPath))
-            {
-                continue;
-            }
-
-            written.Add(ExtractOne(pak, entryPath, destinationDirectory));
         }
 
         return written;
@@ -370,8 +233,7 @@ internal sealed class CVpkExtractionPlanner
     private static string ExtractOne(IPakSystem pak, string entryPath, string destinationDirectory)
     {
         var destination = Path.Combine(destinationDirectory, entryPath.Replace('/', Path.DirectorySeparatorChar));
-        pak.ExtractEntry(entryPath, destination);
-        return destination;
+        return pak.ExtractEntry(entryPath, destination);
     }
 
     private static string GetGroupFolderName(string manifestPath)
@@ -385,9 +247,18 @@ internal sealed class CVpkExtractionPlanner
 
     private static T WithPak<T>(string vpkPath, Func<IPakSystem, T> action)
     {
-        lock (PakLock)
+        using var _prof = CProfiler.Measure();
+
+        EnsureModulesLoaded();
+
+        // Extraction runs many VPKs concurrently (one Task.Run per archive group), so each
+        // needs its own IPakSystem — the shared singleton the terminal uses can only have one
+        // VPK open at a time and would serialize everything behind a single lock.
+        PakPoolGate.Wait();
+
+        try
         {
-            var pak = EnsurePakSystem();
+            var pak = PakPool.TryTake(out var pooled) ? pooled : PakSystemFactory.Create();
             pak.Open(vpkPath);
 
             try
@@ -397,24 +268,33 @@ internal sealed class CVpkExtractionPlanner
             finally
             {
                 pak.Close();
+                PakPool.Add(pak);
             }
+        }
+        finally
+        {
+            PakPoolGate.Release();
         }
     }
 
-    private static IPakSystem EnsurePakSystem()
+    private static void EnsureModulesLoaded()
     {
-        if (_pak != null)
+        if (_modulesLoaded)
         {
-            return _pak;
+            return;
         }
 
-        InterfaceSystem.LoadModule("VPKTools.Tier0");
-        InterfaceSystem.LoadModule("VPKTools.Pak");
+        lock (ModuleLoadLock)
+        {
+            if (_modulesLoaded)
+            {
+                return;
+            }
 
-        _pak = InterfaceSystem.GetInterface<IPakSystem>(PakInterfaceNames.Pak)
-            ?? throw new DepotDownloadException("The VPKTools pak system interface could not be resolved.");
-
-        return _pak;
+            InterfaceSystem.LoadModule("VPKTools.Tier0");
+            InterfaceSystem.LoadModule("VPKTools.Pak");
+            _modulesLoaded = true;
+        }
     }
 
     private static string ResolveInstallPath(string installDirectory, string manifestPath)
@@ -434,7 +314,6 @@ internal sealed class CVpkExtractionPlanner
         internal bool ExtractAllEntries;
         internal bool FromVpkRule;
         internal HashSet<string> ExtensionFilter { get; } = new(StringComparer.OrdinalIgnoreCase);
-        internal List<string> SpecificEntries { get; } = [];
         internal IReadOnlyList<string> ArchiveManifestPaths { get; set; } = [];
     }
 }
@@ -457,12 +336,12 @@ internal sealed class CVpkGroupTracker
 
     internal void MarkFileDone()
     {
-        if (Interlocked.Decrement(ref _remaining) > 0)
-        {
-            return;
-        }
+        Interlocked.Decrement(ref _remaining);
+    }
 
+    internal Task<IReadOnlyList<string>> StartExtraction()
+    {
         var task = Task.Run(() => CVpkExtractionPlanner.ExtractTarget(_target, _installDirectory));
-        Interlocked.CompareExchange(ref _extractionTask, task, null);
+        return Interlocked.CompareExchange(ref _extractionTask, task, null) ?? task;
     }
 }

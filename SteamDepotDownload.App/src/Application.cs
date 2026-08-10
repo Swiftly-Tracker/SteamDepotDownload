@@ -1,3 +1,4 @@
+using SteamDepotDownload.Steam.Core.Diagnostics;
 using SteamDepotDownload.Steam.Shared.Auth;
 using SteamDepotDownload.Steam.Shared.CommandLine;
 using SteamDepotDownload.Steam.Shared.Depot;
@@ -184,11 +185,18 @@ public class Application
             {
                 await session.DisposeAsync().ConfigureAwait(false);
             }
+
+            if (CProfiler.Enabled)
+            {
+                CProfiler.PrintSummary();
+            }
         }
     }
 
     private static void EnableDebugLogging()
     {
+        CProfiler.Enabled = true;
+
         var logging = InterfaceSystem.GetInterface<ILoggingSystem>(InterfaceNames.LoggingSystem);
         if (logging == null)
         {

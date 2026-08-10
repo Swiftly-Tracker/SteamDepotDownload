@@ -1,11 +1,13 @@
+using Microsoft.Win32.SafeHandles;
+
 namespace SteamDepotDownload.Steam.Core.Depot;
 
 internal sealed class CFileStreamData
 {
-    private readonly SemaphoreSlim _lock = new(1, 1);
+    private readonly object _openLock = new();
     private readonly string _path;
     private readonly Action? _onComplete;
-    private FileStream? _stream;
+    private SafeFileHandle? _handle;
     private int _remaining;
 
     internal CFileStreamData(string path, int chunksToDownload, Action? onComplete = null)
@@ -17,17 +19,21 @@ internal sealed class CFileStreamData
 
     internal async Task WriteAsync(long offset, ReadOnlyMemory<byte> data, CancellationToken ct)
     {
-        await _lock.WaitAsync(ct).ConfigureAwait(false);
+        var handle = EnsureHandle();
+        await RandomAccess.WriteAsync(handle, data, offset, ct).ConfigureAwait(false);
+    }
 
-        try
+    private SafeFileHandle EnsureHandle()
+    {
+        if (_handle is { } existing)
         {
-            _stream ??= new FileStream(_path, FileMode.Open, FileAccess.Write, FileShare.Read);
-            _stream.Seek(offset, SeekOrigin.Begin);
-            await _stream.WriteAsync(data, ct).ConfigureAwait(false);
+            return existing;
         }
-        finally
+
+        lock (_openLock)
         {
-            _lock.Release();
+            return _handle ??= File.OpenHandle(_path, FileMode.Open, FileAccess.Write, FileShare.Read,
+                FileOptions.Asynchronous);
         }
     }
 
@@ -38,33 +44,16 @@ internal sealed class CFileStreamData
             return;
         }
 
-        _lock.Wait();
-
-        try
-        {
-            _stream?.Dispose();
-            _stream = null;
-        }
-        finally
-        {
-            _lock.Release();
-        }
-
+        CloseNow();
         _onComplete?.Invoke();
     }
 
     internal void CloseNow()
     {
-        _lock.Wait();
-
-        try
+        lock (_openLock)
         {
-            _stream?.Dispose();
-            _stream = null;
-        }
-        finally
-        {
-            _lock.Release();
+            _handle?.Dispose();
+            _handle = null;
         }
     }
 }
