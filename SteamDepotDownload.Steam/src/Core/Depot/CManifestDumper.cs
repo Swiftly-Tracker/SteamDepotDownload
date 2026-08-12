@@ -32,4 +32,20 @@ internal static class CManifestDumper
         File.WriteAllText(path, text.ToString());
         return path;
     }
+
+    internal static string WriteBranchInfo(string directory, CResolvedDepot depot)
+    {
+        Directory.CreateDirectory(directory);
+
+        var path = Path.Combine(directory, "branch.info.txt");
+        var text = new StringBuilder();
+
+        text.AppendLine($"App ID       : {depot.AppId}");
+        text.AppendLine($"Branch       : {depot.Branch}");
+        text.AppendLine($"Build ID     : {depot.BuildId}");
+        text.AppendLine($"Fetched (UTC): {DateTime.UtcNow:O}");
+
+        File.WriteAllText(path, text.ToString());
+        return path;
+    }
 }

@@ -90,7 +90,7 @@ redist/
   <game files>
 ```
 
-`depot_status` (or `-status`) prints the state file's contents without contacting Steam, and `-manifest-only` writes a plain-text listing of any manifest.
+`depot_status` (or `-status`) prints the state file's contents without contacting Steam, and `-manifest-only` writes a plain-text listing of each manifest plus one shared `branch.info.txt` (app ID, branch, build ID, fetch time) in `dumps/`.
 
 `-pubfile`/`-ugc` downloads land the same way, under `depots/<appid>/0/` by default - a Workshop item's depot id is its owning app's id, so `0` stands in for the (not applicable) build id. Items hosted as a plain file rather than CDN chunks are fetched directly instead.
 

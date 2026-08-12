@@ -183,7 +183,10 @@ internal sealed class CDepotFetcher : IDepotFetcher
 
         var manifest = await AcquireManifestAsync(pool, depot, ct).ConfigureAwait(false);
 
-        return CManifestDumper.Write(depot.DumpDirectory, manifest);
+        var dumpPath = CManifestDumper.Write(depot.DumpDirectory, manifest);
+        CManifestDumper.WriteBranchInfo(depot.DumpDirectory, depot);
+
+        return dumpPath;
     }
 
     private async Task<DownloadResult> DownloadDepotsAsync(uint appId, List<CResolvedDepot> depots,
@@ -210,6 +213,11 @@ internal sealed class CDepotFetcher : IDepotFetcher
                 .ConfigureAwait(false);
 
             summaries.Add(summary);
+        }
+
+        if (Config.ManifestOnly && depots.Count > 0)
+        {
+            CManifestDumper.WriteBranchInfo(depots[0].DumpDirectory, depots[0]);
         }
 
         if (Config.RemoveUnusedFiles && !Config.ManifestOnly)
