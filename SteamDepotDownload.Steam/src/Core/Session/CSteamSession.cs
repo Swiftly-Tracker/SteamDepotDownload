@@ -809,6 +809,11 @@ internal sealed class CSteamSession : ISteamSession
     {
         await EnsureConnectedAsync(ct).ConfigureAwait(false);
 
+        if (IsAnonymous)
+        {
+            return;
+        }
+
         var licenses = _licenses;
         if (licenses == null)
         {
