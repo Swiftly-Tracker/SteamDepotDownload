@@ -378,7 +378,7 @@ internal sealed class CVpkExtractionPlanner
     private static string ExtractOne(IPakSystem pak, string entryPath, string destinationDirectory)
     {
         var destination = Path.Combine(destinationDirectory, entryPath.Replace('/', Path.DirectorySeparatorChar));
-        return pak.ExtractEntry(entryPath, destination);
+        return pak.ExtractEntry(entryPath, destination, decompile: true);
     }
 
     private static string GetGroupFolderName(string manifestPath)
