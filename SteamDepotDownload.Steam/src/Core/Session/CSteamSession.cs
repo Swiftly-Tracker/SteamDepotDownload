@@ -37,6 +37,9 @@ internal sealed class CSteamSession : ISteamSession
     private readonly ConcurrentDictionary<string, byte[]> _branchPasswordHashes = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<(uint DepotId, string Host), string> _cdnAuthTokens = new();
     private readonly Lock _licenseLock = new();
+    private readonly SemaphoreSlim _anonymousGate = new(1, 1);
+
+    private CSteamSession? _anonymous;
 
     private Task? _pump;
     private TaskCompletionSource? _connected;
@@ -292,8 +295,15 @@ internal sealed class CSteamSession : ISteamSession
         }
 
         _subscriptions.Clear();
+
+        if (_anonymous != null)
+        {
+            await _anonymous.DisposeAsync().ConfigureAwait(false);
+        }
+
         _shutdown.Dispose();
         _connectGate.Dispose();
+        _anonymousGate.Dispose();
     }
 
     internal async Task<KeyValue?> GetProductInfoAsync(uint appId, CancellationToken ct)
@@ -324,13 +334,37 @@ internal sealed class CSteamSession : ISteamSession
         {
             if (response.Apps.TryGetValue(appId, out var app))
             {
-                _appInfo[appId] = app.KeyValues;
-                return app.KeyValues;
+                var info = app.KeyValues;
+
+                if (info.Children.Count == 0 && !_credentials.IsAnonymous)
+                {
+                    CSteamLog.Warning(CSteamLog.Depot,
+                        $"Steam sent no app info for app {appId} to this account, using an anonymous lookup.");
+                    info = await GetAnonymousProductInfoAsync(appId, ct).ConfigureAwait(false) ?? info;
+                }
+
+                _appInfo[appId] = info;
+                return info;
             }
         }
 
         _appInfo[appId] = null;
         return null;
+    }
+
+    private async Task<KeyValue?> GetAnonymousProductInfoAsync(uint appId, CancellationToken ct)
+    {
+        await _anonymousGate.WaitAsync(ct).ConfigureAwait(false);
+
+        try
+        {
+            _anonymous ??= new CSteamSession(SteamCredentials.Anonymous, _options);
+            return await _anonymous.GetProductInfoAsync(appId, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            _anonymousGate.Release();
+        }
     }
 
     private async Task RequestPackageInfoAsync(IEnumerable<uint> packageIds, CancellationToken ct)
